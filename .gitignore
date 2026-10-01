@@ -13,9 +13,8 @@ ppas.sh
 *.dll
 *.so
 *.dylib
-opendisk
-test_*
-!tests/
+/opendisk
+/tests/test_filetree
 
 # PascaLS / IDE
 .pascals.db
