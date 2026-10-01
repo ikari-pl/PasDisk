@@ -1,0 +1,13 @@
+{
+  "libraryPaths": [
+    "~/src/lazarus/fpc/3.2.2/sources/rtl/inc",
+    "~/src/lazarus/fpc/3.2.2/sources/rtl/objpas",
+    "~/src/lazarus/fpc/3.2.2/sources/rtl/unix",
+    "~/src/lazarus/fpc/3.2.2/sources/rtl/bsd",
+    "~/src/lazarus/fpc/3.2.2/sources/rtl/darwin",
+    "~/src/lazarus/fpc/3.2.2/sources/rtl/win",
+    "~/src/lazarus/fpc/3.2.2/sources/packages/fcl-base"
+  ],
+  "exclude": ["tests", "examples", "demo", "demos", "fpmake.pp"],
+  "embedLibrary": false
+}

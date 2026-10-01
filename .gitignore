@@ -1,0 +1,33 @@
+# Build products
+*.o
+*.ppu
+*.a
+*.or
+*.res
+*.rsj
+*.compiled
+link*.res
+linkfiles*.res
+ppas.sh
+*.exe
+*.dll
+*.so
+*.dylib
+opendisk
+test_*
+!tests/
+
+# PascaLS / IDE
+.pascals.db
+.pascals.db-*
+*.lps
+*.dbg
+lib/
+bin/
+
+# OS / editor
+.DS_Store
+*~
+*.swp
+.idea/
+.vscode/
