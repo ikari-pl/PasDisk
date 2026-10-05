@@ -34,6 +34,10 @@ make gui        # → ./opendisk-gui  (needs Xcode ld-classic wrapper)
 make test
 ```
 
+`make test` touches only the boot volume. The live volume sweep probes every
+mounted volume, network shares included, so it is opt-in:
+`OPENDISK_LIVE_VOLUMES=1 make test`.
+
 ## Run
 
 ```sh

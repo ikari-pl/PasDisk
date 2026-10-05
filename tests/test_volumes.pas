@@ -1,5 +1,9 @@
 { Volumes.ListVolumes follows DeviceMonitor.swift: system root once as
-  "Computer", no second entry on the boot device, sane capacities. }
+  "Computer", no second entry on the boot device, sane capacities.
+
+  ListVolumes probes every mounted volume, network shares included, so the
+  live sweep runs only with OPENDISK_LIVE_VOLUMES=1. By default the test
+  touches the boot volume alone. }
 
 program test_volumes;
 
@@ -74,6 +78,20 @@ begin
       'nameless mount named by basename; boot-device duplicates dropped');
   end;
 
+  Expect(DeviceOfPath(SystemRootPath, BootDev), 'boot device id readable');
+  Expect(VolumeCapacityOf(SystemRootPath, Cap) and (Cap.TotalBytes > 0) and
+    (Cap.FreeBytes <= Cap.TotalBytes), 'boot volume capacity is sane');
+
+  if GetEnvironmentVariable('OPENDISK_LIVE_VOLUMES') <> '1' then
+  begin
+    WriteLn('skip: live ListVolumes sweep (set OPENDISK_LIVE_VOLUMES=1; ',
+      'it touches network shares)');
+    if Fail then
+      Halt(1);
+    WriteLn('test_volumes: all passed');
+    Halt(0);
+  end;
+
   Vols := ListVolumes;
   Expect(Length(Vols) > 0, 'at least one volume');
   RootCount := 0;
@@ -84,7 +102,6 @@ begin
   Expect((Length(Vols) > 0) and (Vols[0].Path = SystemRootPath) and
     (Vols[0].Name = 'Computer'), 'system root is first and named Computer');
 
-  Expect(DeviceOfPath(SystemRootPath, BootDev), 'boot device id readable');
   for I := 1 to High(Vols) do
   begin
     Expect(DeviceOfPath(Vols[I].Path, Dev) and (Dev <> BootDev),
