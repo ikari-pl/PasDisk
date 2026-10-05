@@ -14,7 +14,10 @@ ppas.sh
 *.so
 *.dylib
 /opendisk
-/tests/test_filetree
+/opendisk-gui
+/opendisk-gui.app/
+/tests/test_*
+!/tests/test_*.pas
 
 # PascaLS / IDE
 .pascals.db
@@ -37,3 +40,8 @@ bin/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Agent tooling state
+.omc/
+/tools/ldwrap/ld
+/tools/ldwrap/as

@@ -1,0 +1,36 @@
+#!/bin/bash
+CLASSIC="$(xcrun --find ld-classic 2>/dev/null)"
+if [[ -z "$CLASSIC" ]]; then
+  echo "ldwrap: xcrun cannot find ld-classic; install Xcode (FPC Cocoa needs the classic linker)" >&2
+  exit 1
+fi
+SDK="$(xcrun --sdk macosx --show-sdk-path)"
+args=(-syslibroot "$SDK")
+skip_next=0
+for a in "$@"; do
+  if [[ $skip_next -eq 1 ]]; then
+    skip_next=0
+    # drop CLT syslibroot values; keep non-CLT if any
+    case "$a" in
+      *CommandLineTools*) ;;
+      *) args+=("$a");;
+    esac
+    continue
+  fi
+  case "$a" in
+    -syslibroot)
+      skip_next=1
+      ;;
+    -ld_classic) ;;
+    -macos_version_min)
+      args+=("-macosx_version_min")
+      ;;
+    *CommandLineTools*SDKs*)
+      # drop -L/-F paths into CLT SDK
+      ;;
+    *)
+      args+=("$a")
+      ;;
+  esac
+done
+exec "$CLASSIC" "${args[@]}"
