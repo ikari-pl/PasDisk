@@ -89,7 +89,7 @@ begin
   end;
   WriteLn('Scanning ', Expanded, ' …');
   LastProgressAt := 0;
-  Result := ScanPath(Expanded, @OnProgress);
+  Result := ScanPath(Expanded, @OnProgress, SubtreeAllowedDevices(Expanded));
   Write(#13, StringOfChar(' ', 60), #13);
 end;
 

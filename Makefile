@@ -92,7 +92,8 @@ tests/test_ringslayout: tests/test_ringslayout.pas $(UNITDIR)/RingsLayout.pas \
 	$(FPC) $(BUILDFLAGS) -otests/test_ringslayout tests/test_ringslayout.pas
 
 tests/test_traversal: tests/test_traversal.pas $(UNITDIR)/Traversal.pas \
-		$(UNITDIR)/DirReader.pas $(UNITDIR)/FileTree.pas $(UNITDIR)/PlatformFS.pas
+		$(UNITDIR)/DirReader.pas $(UNITDIR)/FileTree.pas $(UNITDIR)/PlatformFS.pas \
+		$(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_traversal tests/test_traversal.pas
 
 tests/test_volumeroot: tests/test_volumeroot.pas $(UNITDIR)/Incremental.pas \

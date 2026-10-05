@@ -8,7 +8,7 @@ program test_traversal;
 
 uses
   {$IFDEF UNIX}BaseUnix,{$ENDIF}
-  SysUtils, Classes, FileTree, Traversal, PlatformFS;
+  SysUtils, Classes, FileTree, Traversal, PlatformFS, DirReader, PlatformVolumes;
 
 var
   Fail: Boolean;
@@ -88,6 +88,26 @@ var
   Kids: TFPList;
   I: Integer;
   Sum: Int64;
+procedure TestAllowedDevices;
+var
+  Devs: TDeviceSet;
+  Data: string;
+begin
+  { ScanEngine.swift subtreeAllowedDevices: a scan of / also walks the Data
+    volume behind the firmlinks; any other root stays on its own device. }
+  Devs := SubtreeAllowedDevices('/');
+  Expect(DeviceInSet(Devs, DeviceIDOfPath('/')), '/ allows its own device');
+  Data := DataVolumeMountPoint;
+  if Data <> '' then
+    Expect(DeviceInSet(Devs, DeviceIDOfPath(Data)),
+      '/ also allows the Data volume (' + Data + ')')
+  else
+    WriteLn('skip: no separate Data volume');
+  Devs := SubtreeAllowedDevices(Root);
+  Expect((Length(Devs) = 1) and (Devs[0] = DeviceIDOfPath(Root)),
+    'a non-root scan allows only its own device');
+end;
+
 begin
   Fail := False;
   Root := ResolveRealPath(GetTempDir(False)) + '/od_trav_' + IntToStr(GetProcessID);
@@ -99,6 +119,7 @@ begin
     WriteBytes(Root + '/a/data', 100 * 1024);
     WriteBytes(Root + '/a/b/more', 50 * 1024);
     Before := Total;
+    TestAllowedDevices;
 
     Expect(CreateHardLink(Root + '/a/data', Root + '/a/b/data-link'), 'create hard link');
     WithLink := Total;
