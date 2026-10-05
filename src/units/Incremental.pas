@@ -28,6 +28,17 @@ function ApplyChanges(Tree: TFileTree; const RootPath: string;
   const Changes: TChangeSet; CapturedAt: Double;
   Progress: TScanProgress = nil): Boolean;
 
+const
+  { Files at least this large are re-stat'ed after every apply
+    (IncrementalUpdater.swift driftCheckMinimumBytes). }
+  DriftCheckMinimumBytes = Int64(64) shl 20;
+
+{ Re-reads the allocation of reachable files of at least MinimumBytes (or
+  whose hard-link record is), catching in-place rewrites FSEvents did not
+  report as directory changes. IncrementalUpdater.swift
+  refreshLargeFileSizes. }
+procedure RefreshLargeFileSizes(Tree: TFileTree; MinimumBytes: Int64);
+
 implementation
 
 type
@@ -343,6 +354,28 @@ begin
     AllowedDevices, Progress);
 end;
 
+procedure RefreshLargeFileSizes(Tree: TFileTree; MinimumBytes: Int64);
+var
+  Candidates: TFPList;
+  Paths: array of string;
+  I: Integer;
+  Size: Int64;
+begin
+  Candidates := TFPList.Create;
+  try
+    Tree.ReachableFiles(MinimumBytes, Candidates);
+    { Resolve every path before the first update, as Swift does. }
+    SetLength(Paths, Candidates.Count);
+    for I := 0 to Candidates.Count - 1 do
+      Paths[I] := Tree.PathOf(TNodeID(PtrUInt(Candidates[I])));
+    for I := 0 to Candidates.Count - 1 do
+      if FileAllocatedSize(Paths[I], Size) then
+        Tree.UpdateAllocatedSize(TNodeID(PtrUInt(Candidates[I])), Size);
+  finally
+    Candidates.Free;
+  end;
+end;
+
 function ApplyChanges(Tree: TFileTree; const RootPath: string;
   const Changes: TChangeSet; CapturedAt: Double;
   Progress: TScanProgress): Boolean;
@@ -373,6 +406,7 @@ begin
   finally
     Policy.Free;
   end;
+  RefreshLargeFileSizes(Tree, DriftCheckMinimumBytes);
   Tree.NormalizeHardLinks;
   Tree.ResetDirectorySizes;
   Tree.RollUpDirectorySizes;

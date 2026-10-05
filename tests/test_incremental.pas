@@ -331,6 +331,114 @@ begin
   end;
 end;
 
+procedure AppendBytes(const Path: string; Count: Integer);
+var
+  F: TFileStream;
+  Data: array of Byte;
+begin
+  SetLength(Data, Count);
+  FillChar(Data[0], Count, $A5);
+  F := TFileStream.Create(Path, fmOpenReadWrite);
+  try
+    F.Seek(0, soEnd);
+    F.WriteBuffer(Data[0], Count);
+  finally
+    F.Free;
+  end;
+end;
+
+function ScanSizeOf(const Path: string): Int64;
+var
+  T: TFileTree;
+begin
+  T := ScanPath(Path);
+  try
+    Result := T.SizeOf(RootID);
+  finally
+    T.Free;
+  end;
+end;
+
+function ApplyNothing(Tree: TFileTree; const RootPath: string): Boolean;
+var
+  Changes: TChangeSet;
+begin
+  Changes.ChangedDirectories := TStringList.Create;
+  Changes.SubtreesToRescan := TStringList.Create;
+  try
+    Result := ApplyChanges(Tree, RootPath, Changes, UnixTimeNow);
+  finally
+    Changes.ChangedDirectories.Free;
+    Changes.SubtreesToRescan.Free;
+  end;
+end;
+
+procedure TestLargeFileDrift;
+var
+  Dir: string;
+  Tree: TFileTree;
+  Grow, Small, Linked: TNodeID;
+  Before, Expected, SmallNow: Int64;
+begin
+  { In-place rewrites change no directory, so FSEvents reports nothing;
+    IncrementalUpdater.swift refreshLargeFileSizes re-stats big files. }
+  Dir := Root + '_drift';
+  RemoveTree(Dir);
+  CreateDir(Dir);
+  try
+    WriteBytes(Dir + '/grow', 64 * 1024);
+    WriteBytes(Dir + '/small', 4096);
+    HardLink(Dir + '/grow', Dir + '/grow-link');
+    Tree := ScanPath(Dir);
+    try
+      Grow := Tree.ChildNamed(RootID, 'grow');
+      Small := Tree.ChildNamed(RootID, 'small');
+      Linked := Tree.ChildNamed(RootID, 'grow-link');
+      Before := Tree.SizeOf(Small);
+      AppendBytes(Dir + '/grow', 192 * 1024);
+      AppendBytes(Dir + '/small', 64 * 1024);
+      Expected := ScanSizeOf(Dir);
+
+      RefreshLargeFileSizes(Tree, 32 * 1024);
+      Tree.NormalizeHardLinks;
+      Tree.ResetDirectorySizes;
+      Tree.RollUpDirectorySizes;
+      Expect(Tree.SizeOf(Small) = Before,
+        'file under the drift minimum is not re-stat''ed');
+      Expect(Tree.SizeOf(Grow) + Tree.SizeOf(Linked) >= 256 * 1024,
+        'grown hard-linked file picks up its new allocation');
+      Expect((Tree.SizeOf(Grow) = 0) or (Tree.SizeOf(Linked) = 0),
+        'grown hard link still counts once');
+      Expect(FileAllocatedSize(Dir + '/small', SmallNow), 'small file stat');
+      Expect(Tree.SizeOf(RootID) = Expected - (SmallNow - Before),
+        Format('refreshed total matches a full scan apart from the small file (%d = %d)',
+          [Tree.SizeOf(RootID), Expected - (SmallNow - Before)]));
+    finally
+      Tree.Free;
+    end;
+
+    { ApplyChanges itself refreshes files of at least 64 MiB. }
+    DeleteFile(Dir + '/grow');
+    DeleteFile(Dir + '/grow-link');
+    DeleteFile(Dir + '/small');
+    WriteBytes(Dir + '/huge', DriftCheckMinimumBytes + 1024 * 1024);
+    Tree := ScanPath(Dir);
+    try
+      AppendBytes(Dir + '/huge', 1024 * 1024);
+      Expected := ScanSizeOf(Dir);
+      Expect(Tree.SizeOf(RootID) < Expected, 'cached tree is stale after in-place growth');
+      Expect(ApplyNothing(Tree, Dir), 'apply with no directory changes succeeds');
+      Expect(Tree.SizeOf(RootID) = Expected,
+        Format('apply re-stats a >= 64 MiB file (incremental %d = full %d)',
+          [Tree.SizeOf(RootID), Expected]));
+    finally
+      Tree.Free;
+    end;
+  finally
+    RemoveTree(Dir);
+  end;
+end;
+
 procedure TestVanishedSubtree;
 var
   Tree: TFileTree;
@@ -365,6 +473,7 @@ begin
     TestNewSubdirectoryAdopted;
     TestHardLinkScale;
     TestVanishedSubtree;
+    TestLargeFileDrift;
   finally
     RemoveTree(Root);
     RemoveTree(Outside);
