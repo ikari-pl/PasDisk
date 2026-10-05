@@ -871,13 +871,29 @@ var
   ID: TNodeID;
   J: Integer;
   Record_: THardLink;
+
+  { Bytes left in Stream: like FileTree.swift readArray, every block is
+    checked against it before reading, so a short or corrupt cache yields
+    nil instead of a read error or a huge allocation. }
+  function Left: Int64;
+  begin
+    Result := Stream.Size - Stream.Position;
+  end;
+
 begin
   Result := nil;
+  try
+  if Left < 8 then
+    Exit;
   Magic := ReadU32(Stream);
   if Magic <> FileTreeSerializationMagic then
     Exit;
   Count32 := ReadU32(Stream);
   if Count32 = 0 then
+    Exit;
+  { Size, parent, first child, next sibling, flag and name length per node. }
+  if (Count32 > LongWord(High(Integer))) or
+    (Int64(Count32) * (8 + 4 + 4 + 4 + 1 + 4) + 4 > Left) then
     Exit;
   Count := Integer(Count32);
   Bound := Count;
@@ -904,8 +920,18 @@ begin
   for I := 0 to Count - 1 do
     NameLens[I] := ReadU32(Stream);
   BlobLen := ReadU32(Stream);
+  if Int64(BlobLen) > Left then
+  begin
+    FreeAndNil(Result);
+    Exit;
+  end;
   for I := 0 to Count - 1 do
   begin
+    if (NameLens[I] > LongWord(High(Integer))) or (Int64(NameLens[I]) > Left) then
+    begin
+      FreeAndNil(Result);
+      Exit;
+    end;
     L := Integer(NameLens[I]);
     SetLength(NameBytes, L);
     if L > 0 then
@@ -932,9 +958,15 @@ begin
     end;
   end;
 
+  if Left < 4 then
+  begin
+    FreeAndNil(Result);
+    Exit;
+  end;
   LinkCount32 := ReadU32(Stream);
   LinkCount := Integer(LinkCount32);
-  if (LinkCount < 0) or (LinkCount > Count) then
+  if (LinkCount < 0) or (LinkCount > Count) or
+    (Int64(LinkCount) * (4 + 8 + 8 + 8) > Left) then
   begin
     FreeAndNil(Result);
     Exit;
@@ -982,6 +1014,10 @@ begin
       FreeAndNil(Result);
       Exit;
     end;
+  except
+    on EReadError do
+      FreeAndNil(Result);
+  end;
 end;
 
 end.

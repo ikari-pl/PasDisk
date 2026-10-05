@@ -37,6 +37,11 @@ function ScanCacheFilePath(const RootPath: string): string;
 procedure ScanCachePrune(const Dir, KeepPath: string; MaxFiles: Integer;
   MaxBytes: Int64);
 
+{ Reads and checks the cache header for RootPath; False on any mismatch or
+  malformed header. Exposed so tests can feed crafted streams. }
+function ParseHeader(Stream: TStream; const RootPath: string;
+  out Header: TScanCacheHeader): Boolean;
+
 { Override the cache directory (tests only); '' restores the default. }
 procedure ScanCacheSetDirectory(const Dir: string);
 
@@ -288,8 +293,18 @@ var
   PathBytes: RawByteString;
   SavedPath: string;
   LiveDevice: QWord;
+
+  function Left: Int64;
+  begin
+    Result := Stream.Size - Stream.Position;
+  end;
+
 begin
   Result := False;
+  { ScanCache.swift parseHeader: every field and the saved path must fit
+    in the file; a short or corrupt header is a cache miss. }
+  if Left < 4 + 8 + 8 + 8 + 8 + 4 then
+    Exit;
   Version := ReadU32(Stream);
   if Version <> FormatVersion then
     Exit;
@@ -298,6 +313,8 @@ begin
   Header.FullScanSeconds := ReadF64(Stream);
   SavedDevice := ReadU64(Stream);
   PathLen := ReadU32(Stream);
+  if (PathLen > LongWord(High(Integer))) or (Int64(PathLen) > Left) then
+    Exit;
   SetLength(PathBytes, PathLen);
   if PathLen > 0 then
     Stream.ReadBuffer(PathBytes[1], PathLen);

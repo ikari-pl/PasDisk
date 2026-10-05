@@ -138,6 +138,142 @@ begin
   end;
 end;
 
+function LoadBytes(const Bytes: TBytes; Len: Integer; out Raised: Boolean): TFileTree;
+var
+  M: TMemoryStream;
+begin
+  Result := nil;
+  Raised := False;
+  M := TMemoryStream.Create;
+  try
+    if Len > 0 then
+      M.WriteBuffer(Bytes[0], Len);
+    M.Position := 0;
+    try
+      Result := TFileTree.LoadSerialized(M);
+    except
+      Raised := True;
+    end;
+  finally
+    M.Free;
+  end;
+end;
+
+procedure PatchU32(var Bytes: TBytes; Offset: Integer; Value: LongWord);
+begin
+  Move(Value, Bytes[Offset], 4);
+end;
+
+type
+  { Claims to be far larger than its bytes, so oversized counts pass the
+    bytes-left check and reach the Integer range guard. }
+  TBigClaimStream = class(TMemoryStream)
+  protected
+    function GetSize: Int64; override;
+  end;
+
+function TBigClaimStream.GetSize: Int64;
+begin
+  Result := Int64(100) shl 30;
+end;
+
+function LoadClaimingBig(const Bytes: TBytes; out Raised: Boolean): TFileTree;
+var
+  M: TBigClaimStream;
+begin
+  Result := nil;
+  Raised := False;
+  M := TBigClaimStream.Create;
+  try
+    M.WriteBuffer(Bytes[0], Length(Bytes));
+    M.Position := 0;
+    try
+      Result := TFileTree.LoadSerialized(M);
+    except
+      Raised := True;
+    end;
+  finally
+    M.Free;
+  end;
+end;
+
+procedure TestCorruptStreams;
+var
+  Tree, Loaded: TFileTree;
+  F: TNodeID;
+  Key: THardLinkKey;
+  M: TMemoryStream;
+  Good, Bad: TBytes;
+  Len, Count, NameLenAt: Integer;
+  Raised, AnyRaised, AnyLoaded: Boolean;
+begin
+  { FileTree.swift deserialization returns nil for any short or
+    inconsistent buffer; a bad cache must never raise. }
+  Tree := TFileTree.Create('/c');
+  M := TMemoryStream.Create;
+  try
+    F := Tree.AddNode('file', RootID, 10, False);
+    Tree.AddNode('dir', RootID, 0, True);
+    Key.Device := 1;
+    Key.FileID := 2;
+    Tree.RecordHardLink(F, Key, 10);
+    Tree.WriteSerialized(M);
+    SetLength(Good, M.Size);
+    Move(M.Memory^, Good[0], M.Size);
+    Count := 3;
+  finally
+    M.Free;
+    Tree.Free;
+  end;
+
+  Loaded := LoadBytes(Good, Length(Good), Raised);
+  Expect((Loaded <> nil) and not Raised, 'intact stream loads');
+  Loaded.Free;
+
+  AnyRaised := False;
+  AnyLoaded := False;
+  for Len := 0 to Length(Good) - 1 do
+  begin
+    Loaded := LoadBytes(Good, Len, Raised);
+    AnyRaised := AnyRaised or Raised;
+    AnyLoaded := AnyLoaded or (Loaded <> nil);
+    Loaded.Free;
+  end;
+  Expect(not AnyRaised, 'no truncation raises');
+  Expect(not AnyLoaded, 'every truncation is rejected');
+
+  Bad := Copy(Good);
+  PatchU32(Bad, 4, $FFFFFFFF);
+  Loaded := LoadBytes(Bad, Length(Bad), Raised);
+  Expect((Loaded = nil) and not Raised, 'huge node count is rejected before allocating');
+  Loaded.Free;
+
+  NameLenAt := 8 + Count * (8 + 4 + 4 + 4 + 1);
+  Bad := Copy(Good);
+  PatchU32(Bad, NameLenAt, $7FFFFFFF);
+  Loaded := LoadBytes(Bad, Length(Bad), Raised);
+  Expect((Loaded = nil) and not Raised, 'name length past the end is rejected');
+  Loaded.Free;
+
+  Bad := Copy(Good);
+  PatchU32(Bad, 4, $80000000);
+  Loaded := LoadClaimingBig(Bad, Raised);
+  Expect((Loaded = nil) and not Raised, 'node count above MaxInt is rejected');
+  Loaded.Free;
+
+  Bad := Copy(Good);
+  PatchU32(Bad, NameLenAt, $80000000);
+  Loaded := LoadClaimingBig(Bad, Raised);
+  Expect((Loaded = nil) and not Raised, 'name length above MaxInt is rejected');
+  Loaded.Free;
+
+  Bad := Copy(Good);
+  PatchU32(Bad, NameLenAt + Count * 4, $7FFFFFFF);
+  Loaded := LoadBytes(Bad, Length(Bad), Raised);
+  Expect((Loaded = nil) and not Raised, 'name blob past the end is rejected');
+  Loaded.Free;
+end;
+
 procedure TestReachableFiles;
 var
   Tree: TFileTree;
@@ -171,6 +307,7 @@ begin
   Failures := 0;
   TestRollUp;
   TestReachableFiles;
+  TestCorruptStreams;
   TestLoadHardLinkOrder;
   TestPathRoundTrip;
   TestSortedChildren;
