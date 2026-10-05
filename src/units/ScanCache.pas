@@ -32,11 +32,31 @@ function ScanCachePeek(const RootPath: string; out Header: TScanCacheHeader;
   out FileBytes: Int64): Boolean;
 function ScanCacheFilePath(const RootPath: string): string;
 
+{ Evict old caches in Dir, never touching KeepPath (ScanCache.swift:117-145).
+  Exposed so tests can exercise the caps without writing 4 GiB. }
+procedure ScanCachePrune(const Dir, KeepPath: string; MaxFiles: Integer;
+  MaxBytes: Int64);
+
+{ Override the cache directory (tests only); '' restores the default. }
+procedure ScanCacheSetDirectory(const Dir: string);
+
 implementation
+
+{$IFDEF UNIX}
+uses
+  BaseUnix;
+{$ENDIF}
 
 const
   FormatVersion: LongWord = 3;
+  { ScanCache.swift:114-115 }
   MaxCacheFiles = 8;
+  MaxCacheBytes: Int64 = Int64(4) shl 30;
+  { Orphaned .tmp files older than this are removed (ScanCache.swift:127). }
+  StaleTempSeconds = 3600;
+
+var
+  DirectoryOverride: string = '';
 
 function FNV1a64(const S: string): QWord;
 var
@@ -52,8 +72,15 @@ begin
   end;
 end;
 
+procedure ScanCacheSetDirectory(const Dir: string);
+begin
+  DirectoryOverride := Dir;
+end;
+
 function CacheDirectory: string;
 begin
+  if DirectoryOverride <> '' then
+    Exit(ExcludeTrailingPathDelimiter(DirectoryOverride));
   {$IFDEF DARWIN}
   Result := IncludeTrailingPathDelimiter(GetUserDir) +
     'Library/Caches/opendisk/ScanCache';
@@ -98,6 +125,119 @@ begin
   Stream.ReadBuffer(Result, SizeOf(Result));
 end;
 
+{ Modification time (Unix seconds) and size; False if the entry vanished. }
+function CacheFileInfo(const Path: string; out Modified: Double;
+  out Size: Int64): Boolean;
+{$IFDEF UNIX}
+var
+  Info: BaseUnix.Stat;
+begin
+  Result := fpStat(Path, Info) = 0;
+  if not Result then
+    Exit;
+  Modified := Double(Info.st_mtime) + Double(Info.st_mtimensec) / Double(1e9);
+  Size := Info.st_size;
+end;
+{$ELSE}
+var
+  Rec: TSearchRec;
+begin
+  Result := FindFirst(Path, faAnyFile, Rec) = 0;
+  if not Result then
+    Exit;
+  Modified := (Rec.TimeStamp - UnixDateDelta) * SecsPerDay;
+  Size := Rec.Size;
+  FindClose(Rec);
+end;
+{$ENDIF}
+
+type
+  TCacheFile = record
+    Path: string;
+    Modified: Double;
+    Size: Int64;
+  end;
+
+procedure ScanCachePrune(const Dir, KeepPath: string; MaxFiles: Integer;
+  MaxBytes: Int64);
+var
+  Rec: TSearchRec;
+  Base, Path, Ext: string;
+  Caches: array of TCacheFile;
+  Item: TCacheFile;
+  Count, I, J, Kept: Integer;
+  Modified, Now: Double;
+  Size, Bytes: Int64;
+begin
+  Base := IncludeTrailingPathDelimiter(Dir);
+  {$IFDEF UNIX}
+  Now := fpTime;
+  {$ELSE}
+  Now := (SysUtils.Now - UnixDateDelta) * SecsPerDay;
+  {$ENDIF}
+  Count := 0;
+  SetLength(Caches, 0);
+  if FindFirst(Base + '*', faAnyFile, Rec) <> 0 then
+    Exit;
+  try
+    repeat
+      if (Rec.Name = '.') or (Rec.Name = '..') then
+        Continue;
+      Path := Base + Rec.Name;
+      { Swift defaults a missing date to .distantPast and size to 0. }
+      if not CacheFileInfo(Path, Modified, Size) then
+      begin
+        Modified := -1e300;
+        Size := 0;
+      end;
+      Ext := ExtractFileExt(Rec.Name);
+      if Ext = '.tmp' then
+      begin
+        { ScanCache.swift:126-131 — drop orphaned temp files older than 1 h. }
+        if Modified < Now - StaleTempSeconds then
+          DeleteFile(Path);
+        Continue;
+      end;
+      if Ext <> '.dmscan' then
+        Continue;
+      if Count = Length(Caches) then
+        SetLength(Caches, Count * 2 + 8);
+      Caches[Count].Path := Path;
+      Caches[Count].Modified := Modified;
+      Caches[Count].Size := Size;
+      Inc(Count);
+    until FindNext(Rec) <> 0;
+  finally
+    FindClose(Rec);
+  end;
+
+  { Newest first (ScanCache.swift:136). }
+  for I := 1 to Count - 1 do
+  begin
+    Item := Caches[I];
+    J := I - 1;
+    while (J >= 0) and (Caches[J].Modified < Item.Modified) do
+    begin
+      Caches[J + 1] := Caches[J];
+      Dec(J);
+    end;
+    Caches[J + 1] := Item;
+  end;
+
+  { ScanCache.swift:137-145 — every entry counts toward the running totals,
+    evicted or not; the file just written is never removed. }
+  Kept := 0;
+  Bytes := 0;
+  for I := 0 to Count - 1 do
+  begin
+    Inc(Kept);
+    Inc(Bytes, Caches[I].Size);
+    if ((Kept > MaxFiles) or (Bytes > MaxBytes)) and
+       (Caches[I].Path <> KeepPath) then
+      DeleteFile(Caches[I].Path);
+  end;
+end;
+
 function ScanCacheSave(Tree: TFileTree; const RootPath: string;
   const Header: TScanCacheHeader): Boolean;
 var
@@ -134,7 +274,9 @@ begin
   if FileExists(FinalPath) then
     DeleteFile(FinalPath);
   Result := RenameFile(TmpPath, FinalPath);
-  if not Result then
+  if Result then
+    ScanCachePrune(Dir, FinalPath, MaxCacheFiles, MaxCacheBytes)
+  else
     DeleteFile(TmpPath);
 end;
 
