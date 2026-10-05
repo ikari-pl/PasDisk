@@ -45,3 +45,6 @@ bin/
 .omc/
 /tools/ldwrap/ld
 /tools/ldwrap/as
+
+# Agent worktrees
+.claude/worktrees/
