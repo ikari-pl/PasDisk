@@ -241,6 +241,7 @@ type
     procedure BackClick(Sender: TObject);
     procedure RefreshClick(Sender: TObject);
     procedure DeleteClick(Sender: TObject);
+    procedure DeleteConfirmed(Confirmed: Boolean);
     procedure CollectorRemove(Sender: TObject; const Path: string);
     function RowItem(Index: Integer; out Item: TFolderItem): Boolean;
     procedure StageItems(const Items: array of TFolderItem);
@@ -3574,9 +3575,19 @@ begin
     Title := 'Delete 1 item?'
   else
     Title := Format('Delete %d items?', [FCollector.Count]);
-  if not ConfirmDestructive(Title,
+  { confirmationDialog: a sheet on the window; the deletion starts from
+    its answer. False: a confirmation is already open (only automation
+    can ask twice — the sheet blocks the window), so this request is
+    dropped and that sheet decides. }
+  if not ConfirmDestructiveSheet(Self, Title,
     'This permanently deletes the collected items and can’t be undone.',
-    'Delete ' + FormatFileSize(FCollector.TotalBytes)) then
+    'Delete ' + FormatFileSize(FCollector.TotalBytes), @DeleteConfirmed) then
+    Exit;
+end;
+
+procedure TMainForm.DeleteConfirmed(Confirmed: Boolean);
+begin
+  if not Confirmed or (FCollector.Count = 0) or (FDeleteJob <> nil) then
     Exit;
   { performDeletion: delete in the background, show progress. }
   FDoneTimer.Enabled := False;
