@@ -11,10 +11,10 @@ interface
 
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
-  StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
+  StdCtrls, ComCtrls, Buttons, Menus, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
-  DisplayList, CleanableSpace;
+  DisplayList, CleanableSpace, FullDiskAccessUI;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -175,6 +175,9 @@ type
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure FormResize(Sender: TObject);
     procedure FormActivate(Sender: TObject);
+    procedure SettingsClick(Sender: TObject);
+    procedure StartupPromptTick(Sender: TObject);
+    procedure BuildMenus;
     procedure OpenFDA(Sender: TObject);
     procedure RelaunchForFDA(Sender: TObject);
     procedure RescanState(Sender: TObject);
@@ -350,6 +353,15 @@ begin
   OnKeyDown := @FormKeyDown;
   OnResize := @FormResize;
   OnActivate := @FormActivate;
+  BuildMenus;
+  { OpenDiskApp.checkFullDiskAccessAtStartup: once, 0.5 s after the
+    window appears. }
+  with TTimer.Create(Self) do
+  begin
+    Interval := 500;
+    OnTimer := @StartupPromptTick;
+    Enabled := True;
+  end;
   FCollector := TCollector.Create;
   FBreadcrumbs := TStringList.Create;
   FTree := nil;
@@ -685,6 +697,46 @@ begin
   FFolderBtn.Top := FVolList.Top + FVolList.Height + 12;
   FRefreshVolBtn.Top := FFolderBtn.Top;
   FPickerState.BoundsRect := FVolList.BoundsRect;
+end;
+
+{ The app menu (the first item titled with the Apple logo becomes it on
+  macOS): 'Settings…' Cmd-, like SwiftUI's Settings scene. }
+procedure TMainForm.BuildMenus;
+var
+  AppMainMenu: TMainMenu;
+  AppMenu, Item: TMenuItem;
+begin
+  AppMainMenu := TMainMenu.Create(Self);
+  AppMenu := TMenuItem.Create(AppMainMenu);
+  AppMenu.Caption := #$EF#$A3#$BF;
+  AppMainMenu.Items.Add(AppMenu);
+  Item := TMenuItem.Create(AppMainMenu);
+  Item.Caption := 'Settings…';
+  Item.ShortCut := ShortCut(VK_OEM_COMMA, [ssMeta]);
+  Item.OnClick := @SettingsClick;
+  AppMenu.Add(Item);
+  Menu := AppMainMenu;
+end;
+
+procedure TMainForm.SettingsClick(Sender: TObject);
+begin
+  ShowSettingsWindow;
+end;
+
+procedure TMainForm.StartupPromptTick(Sender: TObject);
+begin
+  (Sender as TTimer).Enabled := False;
+  { Screenshots: OPENDISK_GUI_SETTINGS=1 opens the Settings window. }
+  if GetEnvironmentVariable('OPENDISK_GUI_SETTINGS') = '1' then
+  begin
+    SettingsClick(nil);
+    Exit;
+  end;
+  { Screenshot automation must not stop at a modal alert. }
+  if (GetEnvironmentVariable('OPENDISK_GUI_SCAN') <> '') or
+    (GetEnvironmentVariable('OPENDISK_GUI_NO_VOLUMES') <> '') then
+    Exit;
+  PromptForFullDiskAccessAtStartup;
 end;
 
 procedure TMainForm.FormActivate(Sender: TObject);

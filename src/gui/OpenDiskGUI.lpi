@@ -56,6 +56,14 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="FullDiskAccessUI.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="PlatformAlert.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="ChartHoverTip.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
