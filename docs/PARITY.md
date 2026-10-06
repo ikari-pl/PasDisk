@@ -114,7 +114,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Click: center → back, directory → navigate | RingsChartView.swift:35-44 | gui/RingsChart.pas:329-343; uMainForm.pas:783-793 | N/A | Done | od-31j.11 | Pascal checks `DirectoryExists` on disk instead of the segment kind. |
 | Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | gui/RingsChart.pas (OnDragSegment, DraggableSegmentAt); gui/uMainForm.pas | N/A | Done | od-31j.18.6 | Segment drag (87e2000) and FileActionsMenu on draggable segments (616c3cf). |
 | Chart accessibility (label + per-segment elements/actions) | RingsChartView.swift:57-94 | — | N/A | Missing | — | |
-| Coalesced chart rebuild; "Building chart…" placeholder | DiskAnalyzer.swift:256-281; DiskAnalysisView.swift:430-439 | gui/RingsChart.pas:281-287 ("Rings appear after a scan.") | N/A | Partial | od-31j.18.4 | |
+| Coalesced chart rebuild; "Building chart…" placeholder | DiskAnalyzer.swift:256-281; DiskAnalysisView.swift:430-439 | gui/uMainForm.pas (chart built with each tree snapshot) | N/A | N/A | od-31j.18.4 | Swift lays the chart out asynchronously and shows "Building chart…" until it is ready; here the chart is built synchronously from every snapshot, so there is no gap to cover. |
 | SVG/HTML rings export (`opendisk view`) | — | units/RingsSVG.pas; opendisk.lpr:258-292 | N/A | N/A | — | Pascal only. |
 
 ## 7. GUI shell & navigation
@@ -130,7 +130,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Window title/subtitle (folder name / displayed size) | DiskAnalysisView.swift:94-95, 496-506 | gui/uMainForm.pas:601 | N/A | Partial | od-31j.18.2 | No subtitle. The title does not follow navigation. |
 | Back via the rings center / breadcrumb stack | DiskAnalysisView.swift:544-574 | gui/uMainForm.pas:772-773, 809-818 | N/A | Done | od-31j.11 | |
 | Navigating to an unscanned path triggers a scan of it | DiskAnalysisView.swift:569-574 | — | N/A | Missing | — | |
-| List/chart split 60/40, resizable, minimum widths | DiskAnalysisView.swift:51-67 | gui/uMainForm.pas:343-348 (fixed 440 px, no splitter) | N/A | Partial | od-31j.18.4 | |
+| List/chart split 60/40, resizable, minimum widths | DiskAnalysisView.swift:51-67 | gui/uMainForm.pas (BodyResize, SplitterDrag); gui/ThinSplitter.pas | N/A | Done | od-31j.18.4 | List 60 % (min 320), chart 40 % (min 280), ratio kept on resize, 1-pt draggable divider; window 1100x720, min 900x600. LCL TSplitter is not used (the list stopped painting with it on Cocoa). |
 | Folder rows: file icon, name weight, "N items", size bar, size, chevron, hover/selection | Views/Components/FolderRowView.swift:47-121; Views/Analysis/ScanResultsView.swift | gui/uMainForm.pas ListDrawItem | N/A | Done | od-31j.18.3, od-31j.18.17 | Native path icons since 6975b1a. |
 | Sortable Name/Size column header | DiskAnalysisView.swift:216-228, 340-375 | gui/uMainForm.pas sort header and visible-list sorting | N/A | Done | od-31j.18.3 | 1fbc7ac adds active chevrons, Swift default directions, and sorting after collector filtering. |
 | Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | gui/uMainForm.pas list selection/context menu | N/A | Done | od-31j.18.16 | Native table selection since 39b1d2f (the hand-rolled Shift/Cmd handling of 1fbc7ac toggled Cmd-clicks back); fa5f1c2 adds Add N Selected. |
@@ -231,10 +231,10 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 77 |
-| Partial | 3 | 10 |
+| Done | 41 | 78 |
+| Partial | 3 | 8 |
 | Missing | 1 | 7 |
-| N/A | 58 | 9 |
+| N/A | 58 | 10 |
 | Unverified | 2 | 2 |
 
 Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. It also has Quick Look and the row, segment and collector menus. Open: SF Symbol icons and keyboard hints in menus, and the Quick Look sheet for collector previews.

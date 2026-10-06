@@ -16,7 +16,7 @@ uses
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
-  PlatformQuickLook;
+  PlatformQuickLook, ThinSplitter;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -81,6 +81,9 @@ type
     FRefreshBtn: TButton;
     FBody: TPanel;
     FListPanel: TPanel;
+    { HSplitView divider; FSplitRatio is the list's share of the width. }
+    FSplitter: TThinSplitter;
+    FSplitRatio: Double;
     { DiskAnalysisView columnHeader: 'Name' and 'Size', chevron on the
       active column. }
     FListHeader: TPaintBox;
@@ -198,6 +201,9 @@ type
       const ScreenPt: TPoint);
     procedure ChartMenuHookTick(Sender: TObject);
     procedure QuickLookRow(Row: Integer);
+    procedure BodyResize(Sender: TObject);
+    procedure SplitterMoved(Sender: TObject);
+    procedure SplitterDrag(Sender: TObject; var NewWidth: Integer);
     procedure MenuQuickLookClick(Sender: TObject);
     procedure QuickLookHookTick(Sender: TObject);
     procedure CollectorRowMenu(Sender: TObject; const Path: string;
@@ -280,6 +286,9 @@ const
 const
   { List object of the synthetic 'Purgeable Space' row (never a node). }
   PurgeableRowID = TNodeID(-2);
+  { HSplitView minimum widths. }
+  ListMinWidth = 320;
+  ChartMinWidth = 280;
   { How far above the collector bar a drag still targets it. }
   CollectorDropBand = 64;
   { Search result rows: SearchRowBase - index into FSearchItems. }
@@ -415,8 +424,12 @@ constructor TMainForm.Create(AOwner: TComponent);
 begin
   inherited CreateNew(AOwner, 0);
   Caption := 'OpenDisk';
-  Width := 1120;
-  Height := 740;
+  { DiskAnalysisView .frame(minWidth: 900, idealWidth: 1100,
+    minHeight: 600, idealHeight: 720). }
+  Width := 1100;
+  Height := 720;
+  Constraints.MinWidth := 900;
+  Constraints.MinHeight := 600;
   Position := poScreenCenter;
   KeyPreview := True;
   Color := CBg;
@@ -638,7 +651,10 @@ begin
   FListPanel := TPanel.Create(Self);
   FListPanel.Parent := FBody;
   FListPanel.Align := alLeft;
-  FListPanel.Width := 440;
+  { DiskAnalysisView HSplitView: list minWidth 320, ideal 60 %; chart
+    minWidth 280, ideal 40 %. }
+  FSplitRatio := 0.6;
+  FListPanel.Width := Round(Width * FSplitRatio);
   FListPanel.BevelOuter := bvNone;
   FListPanel.Color := CPanel;
 
@@ -682,6 +698,16 @@ begin
   FSearchEmpty.Color := CPanel;
   FSearchEmpty.Visible := False;
   FListHover := -1;
+
+  FSplitter := TThinSplitter.Create(Self);
+  FSplitter.Parent := FBody;
+  FSplitter.Align := alLeft;
+  FSplitter.Left := FListPanel.Left + FListPanel.Width;
+  FSplitter.Color := CBg;
+  FSplitter.Pane := FListPanel;
+  FSplitter.OnDrag := @SplitterDrag;
+  FSplitter.OnMoved := @SplitterMoved;
+  FBody.OnResize := @BodyResize;
 
   FChartPanel := TPanel.Create(Self);
   FChartPanel.Parent := FBody;
@@ -2351,6 +2377,31 @@ begin
   M.OnClick := @MenuCopyPathClick;
   FRowMenu.Items.Add(M);
   FRowMenu.PopUp(ScreenPt.X, ScreenPt.Y);
+end;
+
+{ The panes keep their proportion as the window resizes, within the
+  minimum widths. }
+procedure TMainForm.BodyResize(Sender: TObject);
+var
+  W: Integer;
+begin
+  W := Round(FBody.ClientWidth * FSplitRatio);
+  W := Min(W, FBody.ClientWidth - FSplitter.Width - ChartMinWidth);
+  W := Max(W, ListMinWidth);
+  if W <> FListPanel.Width then
+    FListPanel.Width := W;
+end;
+
+procedure TMainForm.SplitterDrag(Sender: TObject; var NewWidth: Integer);
+begin
+  NewWidth := Min(NewWidth, FBody.ClientWidth - FSplitter.Width - ChartMinWidth);
+  NewWidth := Max(NewWidth, ListMinWidth);
+end;
+
+procedure TMainForm.SplitterMoved(Sender: TObject);
+begin
+  if FBody.ClientWidth > 0 then
+    FSplitRatio := FListPanel.Width / FBody.ClientWidth;
 end;
 
 { quickLook(item) / quickLookTarget: the panel shows Row (or, for -1, the
