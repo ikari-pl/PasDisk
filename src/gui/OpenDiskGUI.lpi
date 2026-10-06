@@ -36,6 +36,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="PlatformChartCanvas.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="PlatformAppearance.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

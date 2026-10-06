@@ -477,7 +477,7 @@ begin
   Invalidate;
   FVolList.Invalidate;
   FList.Invalidate;
-  FChart.Invalidate;
+  FChart.AppearanceChanged;
 end;
 
 procedure TMainForm.OnThemeChange(Sender: TObject);

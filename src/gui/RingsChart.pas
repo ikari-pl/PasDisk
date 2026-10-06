@@ -8,7 +8,7 @@ interface
 
 uses
   Classes, SysUtils, Math, Graphics, Controls, ChartItem, Formatters, RingsLayout,
-  GuiColors;
+  GuiColors, PlatformChartCanvas;
 
 type
   TRingSelectEvent = procedure(Sender: TObject; const Path: string;
@@ -21,10 +21,12 @@ type
     FHoverPath: string;
     FOnSelect: TRingSelectEvent;
     FLayout: TRingsLayout;
+    FStaticLayer: TChartCanvasCache;
     procedure SetRoot(AValue: TChartItem);
     procedure RebuildLayout;
     procedure DrawBackground(ACanvas: TCanvas; const R: TRect);
     procedure DrawSegment(ACanvas: TCanvas; Seg: TRingSegment; Highlighted: Boolean);
+    procedure DrawSegmentLabels(ACanvas: TCanvas; Seg: TRingSegment);
     function ColorFor(ColorPosition: Double; Depth: Integer;
       Highlighted: Boolean): TColor;
   protected
@@ -34,6 +36,8 @@ type
     procedure MouseLeave; override;
     procedure Click; override;
   public
+    { Colours come from the appearance: drop the cached layer. }
+    procedure AppearanceChanged;
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
     procedure TakeRoot(ARoot: TChartItem);
@@ -49,6 +53,7 @@ begin
   ControlStyle := ControlStyle + [csOpaque];
   FOwnsRoot := False;
   FLayout := nil;
+  FStaticLayer := TChartCanvasCache.Create;
   DoubleBuffered := True;
   Color := clWindow;
 end;
@@ -56,6 +61,7 @@ end;
 destructor TRingsChart.Destroy;
 begin
   FreeAndNil(FLayout);
+  FreeAndNil(FStaticLayer);
   if FOwnsRoot then
     FRoot.Free;
   inherited Destroy;
@@ -68,6 +74,7 @@ begin
   FOwnsRoot := False;
   FRoot := AValue;
   RebuildLayout;
+  FStaticLayer.Invalidate;
   Invalidate;
 end;
 
@@ -78,6 +85,7 @@ begin
   FRoot := ARoot;
   FOwnsRoot := True;
   RebuildLayout;
+  FStaticLayer.Invalidate;
   Invalidate;
 end;
 
@@ -92,12 +100,21 @@ begin
   if (R.Right - R.Left < 2) or (R.Bottom - R.Top < 2) then
     Exit;
   FLayout := TRingsLayout.Create(FRoot, R.Right - R.Left, R.Bottom - R.Top);
+  FStaticLayer.Resize(R.Right - R.Left, R.Bottom - R.Top, BackingScaleFor(Self));
+  FStaticLayer.Invalidate;
+end;
+
+procedure TRingsChart.AppearanceChanged;
+begin
+  FStaticLayer.Invalidate;
+  Invalidate;
 end;
 
 procedure TRingsChart.Resize;
 begin
   inherited Resize;
   RebuildLayout;
+  FStaticLayer.Resize(ClientWidth, ClientHeight, BackingScaleFor(Self));
   Invalidate;
 end;
 
@@ -191,18 +208,18 @@ end;
 procedure TRingsChart.DrawSegment(ACanvas: TCanvas; Seg: TRingSegment;
   Highlighted: Boolean);
 var
-  Pts: array of TPoint;
-  Steps, I, N: Integer;
-  A, A0, A1, Mid: Double;
+  A0, A1, Mid: Double;
   SX, SY: Integer;
 begin
-  ACanvas.Brush.Color := ColorFor(Seg.ColorPosition, Seg.Depth, Highlighted);
-  ACanvas.Brush.Style := bsSolid;
-  ACanvas.Pen.Color := clBtnShadow;
-  ACanvas.Pen.Width := 1;
+  A0 := Seg.StartAngle;
+  A1 := Seg.StartAngle + Seg.Sweep;
 
   if Seg.Depth = 0 then
   begin
+    ACanvas.Brush.Color := ColorFor(Seg.ColorPosition, Seg.Depth, Highlighted);
+    ACanvas.Brush.Style := bsSolid;
+    ACanvas.Pen.Color := clBtnShadow;
+    ACanvas.Pen.Width := 1;
     ACanvas.Ellipse(
       Round(FLayout.CenterX - Seg.OuterRadius),
       Round(FLayout.CenterY - Seg.OuterRadius),
@@ -227,41 +244,16 @@ begin
     Exit;
   end;
 
-  A0 := Seg.StartAngle;
-  A1 := Seg.StartAngle + Seg.Sweep;
-  Steps := Max(8, Round(Abs(Seg.Sweep) / (Pi / 64)));
-  N := (Steps + 1) * 2;
-  SetLength(Pts, N);
-  for I := 0 to Steps do
-  begin
-    A := A0 + (A1 - A0) * I / Steps;
-    Pts[I].X := Round(FLayout.CenterX + Cos(A) * Seg.OuterRadius);
-    Pts[I].Y := Round(FLayout.CenterY + Sin(A) * Seg.OuterRadius);
-  end;
-  for I := 0 to Steps do
-  begin
-    A := A0 + (A1 - A0) * (Steps - I) / Steps;
-    Pts[Steps + 1 + I].X := Round(FLayout.CenterX + Cos(A) * Seg.InnerRadius);
-    Pts[Steps + 1 + I].Y := Round(FLayout.CenterY + Sin(A) * Seg.InnerRadius);
-  end;
-  ACanvas.Polygon(Pts);
+  FillAnnularSector(ACanvas, FLayout.CenterX, FLayout.CenterY,
+    Seg.InnerRadius, Seg.OuterRadius, A0, A1,
+    ColorFor(Seg.ColorPosition, Seg.Depth, Highlighted),
+    ColorToRGB(clBtnShadow), 1);
 
   if Seg.HasHiddenChildren then
   begin
-    ACanvas.Pen.Color := ACanvas.Brush.Color;
-    ACanvas.Pen.Width := 3;
-    ACanvas.Brush.Style := bsClear;
-    { approximate continued-edge arc as polyline }
-    SetLength(Pts, Steps + 1);
-    for I := 0 to Steps do
-    begin
-      A := A0 + (A1 - A0) * I / Steps;
-      Pts[I].X := Round(FLayout.CenterX + Cos(A) * (Seg.OuterRadius + 4));
-      Pts[I].Y := Round(FLayout.CenterY + Sin(A) * (Seg.OuterRadius + 4));
-    end;
-    ACanvas.Polyline(Pts);
-    ACanvas.Brush.Style := bsSolid;
-    ACanvas.Pen.Width := 1;
+    StrokeContinuedEdge(ACanvas, FLayout.CenterX, FLayout.CenterY,
+      Seg.OuterRadius + 4, A0, A1,
+      ColorFor(Seg.ColorPosition, Seg.Depth, Highlighted), 3);
   end;
 
   Mid := (Seg.InnerRadius + Seg.OuterRadius) / 2;
@@ -278,6 +270,38 @@ begin
   end;
 end;
 
+procedure TRingsChart.DrawSegmentLabels(ACanvas: TCanvas; Seg: TRingSegment);
+var
+  Mid: Double;
+  SX, SY: Integer;
+begin
+  if Seg.Depth = 0 then
+  begin
+    ACanvas.Font.Color := ContrastTextColor(ColorFor(Seg.ColorPosition, Seg.Depth, False));
+    ACanvas.Font.Style := [fsBold];
+    ACanvas.Font.Size := 11;
+    ACanvas.Brush.Style := bsClear;
+    ACanvas.TextOut(Round(FLayout.CenterX) - ACanvas.TextWidth(Seg.Name) div 2,
+      Round(FLayout.CenterY) - ACanvas.TextHeight(Seg.Name) - 2, Seg.Name);
+    ACanvas.Font.Style := [];
+    ACanvas.Font.Size := 9;
+    ACanvas.TextOut(Round(FLayout.CenterX) - ACanvas.TextWidth(FormatFileSize(Seg.Size)) div 2,
+      Round(FLayout.CenterY) + 2, FormatFileSize(Seg.Size));
+    Exit;
+  end;
+  Mid := (Seg.InnerRadius + Seg.OuterRadius) / 2;
+  if (Seg.Sweep * Mid > 36) and (FLayout.Thickness >= 14) then
+  begin
+    ACanvas.Font.Size := 8;
+    ACanvas.Font.Color := ContrastTextColor(ColorFor(Seg.ColorPosition, Seg.Depth, False));
+    ACanvas.Brush.Style := bsClear;
+    SX := Round(FLayout.CenterX + Cos(Seg.StartAngle + Seg.Sweep / 2) * Mid);
+    SY := Round(FLayout.CenterY + Sin(Seg.StartAngle + Seg.Sweep / 2) * Mid);
+    ACanvas.TextOut(SX - ACanvas.TextWidth(Seg.Name) div 2,
+      SY - ACanvas.TextHeight(Seg.Name) div 2, Seg.Name);
+  end;
+end;
+
 procedure TRingsChart.Paint;
 var
   R: TRect;
@@ -285,9 +309,12 @@ var
   Seg: TRingSegment;
 begin
   R := ClientRect;
-  DrawBackground(Canvas, R);
+  if FStaticLayer = nil then
+    Exit;
+  FStaticLayer.Resize(R.Right - R.Left, R.Bottom - R.Top, BackingScaleFor(Self));
   if FRoot = nil then
   begin
+    DrawBackground(Canvas, R);
     Canvas.Font.Color := SecondaryTextColor(clWindow);
     Canvas.Font.Size := 12;
     Canvas.TextOut(R.Left + 24, R.Top + 24, 'Rings appear after a scan.');
@@ -297,10 +324,49 @@ begin
     RebuildLayout;
   if FLayout = nil then
     Exit;
+  if not FStaticLayer.Valid then
+  begin
+    FStaticLayer.BeginStatic;
+    for I := 0 to FLayout.Segments.Count - 1 do
+    begin
+      Seg := TRingSegment(FLayout.Segments[I]);
+      if Seg.Depth = 0 then
+        FStaticLayer.FillDisk(FLayout.CenterX, FLayout.CenterY, Seg.OuterRadius,
+          ColorFor(Seg.ColorPosition, Seg.Depth, False), ColorToRGB(clBtnShadow), 1)
+      else
+        FStaticLayer.FillSector(FLayout.CenterX, FLayout.CenterY,
+          Seg.InnerRadius, Seg.OuterRadius, Seg.StartAngle,
+          Seg.StartAngle + Seg.Sweep,
+          ColorFor(Seg.ColorPosition, Seg.Depth, False), ColorToRGB(clBtnShadow), 1);
+    end;
+    FStaticLayer.EndStatic;
+    FStaticLayer.Valid := True;
+  end;
+  FStaticLayer.DrawTo(Canvas);
+  if FHoverPath <> '' then
+    for I := 0 to FLayout.Segments.Count - 1 do
+    begin
+      Seg := TRingSegment(FLayout.Segments[I]);
+      if Seg.Path = FHoverPath then
+      begin
+        FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY,
+          Seg.InnerRadius, Seg.OuterRadius, Seg.StartAngle,
+          Seg.StartAngle + Seg.Sweep,
+          ColorFor(Seg.ColorPosition, Seg.Depth, True),
+          ColorToRGB(clBtnShadow), 1);
+        if Seg.HasHiddenChildren then
+          StrokeContinuedEdge(Canvas, FLayout.CenterX, FLayout.CenterY,
+            Seg.OuterRadius + 4, Seg.StartAngle,
+            Seg.StartAngle + Seg.Sweep,
+            ColorFor(Seg.ColorPosition, Seg.Depth, True), 3);
+        Break;
+      end;
+    end;
+  { Labels last, so the hover highlight never covers them. }
   for I := 0 to FLayout.Segments.Count - 1 do
   begin
     Seg := TRingSegment(FLayout.Segments[I]);
-    DrawSegment(Canvas, Seg, Seg.Path = FHoverPath);
+    DrawSegmentLabels(Canvas, Seg);
   end;
 end;
 
