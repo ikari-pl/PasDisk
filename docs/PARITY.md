@@ -4,8 +4,8 @@ Checklist for bead `od-31j.17`. It feeds the GUI fidelity epic `od-31j.18`.
 
 - **Swift reference:** `/Users/ikari/src/OpenDisk/OpenDisk/` (paths below are relative to it).
 - **Pascal port:** `src/` in this repo at commit `d4ada94` (2026-10-05). Line numbers refer to
-  that commit. Uncommitted edits to `src/gui/uMainForm.pas` and `src/gui/RingsChart.pas` in the
-  main checkout are not reflected.
+  that commit, except in rows updated on 2026-10-06, which name units and cite the commit that
+  changed them. Uncommitted work in the checkout is not reflected.
 - **Method:** I read both source trees. I did not build or run either app, so visual and runtime
   claims come from the code and from the bead descriptions.
 
@@ -27,15 +27,15 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | `normalizeHardLinks` | Services/Scanning/FileTree.swift:110-122 | units/FileTree.pas:587 | Done | Done | od-31j.22 | |
 | FileTree model, size rollup, display sort, `path(of:)`, `nodeID(forPath:)` | FileTree.swift:3-306 | units/FileTree.pas:29-770 | Done | Done | od-31j.1 | |
 | Allowed devices = scan root + Data volume (when the root is on the system volume) | Services/Scanning/ScanEngine.swift:160-162, 256-265 | units/Traversal.pas:73-88; opendisk.lpr:92; gui/uMainForm.pas (TScanThread.Execute) | Done | Done | od-31j.39 | Both full-scan paths pass `SubtreeAllowedDevices` (2115090, a081ce3); `test_traversal` checks / includes /System/Volumes/Data. |
-| Data-volume alias (`/x` → `/System/Volumes/Data/x` when `/x` is missing) | ScanEngine.swift:173-177 | — | Missing | Missing | — | |
-| Boot volume group: scan `/` plus each `/System/Volumes/*` sibling, merge them, drop `/Volumes` | ScanEngine.swift:288-359; FileTree.swift:306 (`merge`) | — | Missing | Missing | — | Pascal has no `merge` or `removeChild`. |
-| Parallel traversal workers (3-5 for a subtree, 4-8 for a volume) | TraversalScanner.swift:6-12, 65-116 | units/Traversal.pas:90-186 (one thread, stack) | Missing | Missing | — | Affects performance, not results. |
-| Process I/O tuning (`setiopolicy_np` IMPORTANT, `RLIMIT_NOFILE` 65536) | ScanEngine.swift:41-48 | — | Missing | Missing | — | |
+| Data-volume alias (`/x` → `/System/Volumes/Data/x` when `/x` is missing) | ScanEngine.swift:173-177 | units/ScanTopology.pas (ResolveDataVolumeAlias); gui/uMainForm.pas (TScanThread, StartScan) | Done | Done | od-31j.43 | 93a8b81; GUI scans through it since 07394ea. |
+| Boot volume group: scan `/` plus each `/System/Volumes/*` sibling, merge them, drop `/Volumes` | ScanEngine.swift:288-359; FileTree.swift:306 (`merge`) | units/ScanTopology.pas (ScanBootVolumeGroup); FileTree.pas (Merge, RemoveChildNamed) | Done | Done | od-31j.43 | 93a8b81. Not exercised on a real `/` scan here (it would walk the NFS mount point under ~/OrbStack); merge and sibling selection are unit-tested. |
+| Parallel traversal workers (3-5 for a subtree, 4-8 for a volume) | TraversalScanner.swift:6-12, 65-116 | units/Traversal.pas (ParallelScan, TScanWorker); ScanTopology.pas (WorkersFor) | Done | Done | od-31j.44 | 9fc76bc. ~/src (1.5M nodes): 1 worker 30-35 s, 4 workers 11-14 s. |
+| Process I/O tuning (`setiopolicy_np` IMPORTANT, `RLIMIT_NOFILE` 65536) | ScanEngine.swift:41-48 | units/PlatformProcessTuning.pas | Done | Done | od-31j.43 | 93a8b81. Like Swift, it can lower a soft limit above 65536. |
 | Cancellation (`isCancelled` checked by every worker) | ScanEngine.swift:5-10, 107-114; TraversalScanner.swift:127 | units/Traversal.pas (ScanPath IsCancelled); gui/uMainForm.pas CancelScan | Done | Done | od-31j.24 | Polled once per directory like TraversalScanner.swift:130; window close and Unmount stop the walk (2115090). |
 | Progress metrics (bytes, items, phase) emitted every 33 ms | ScanEngine.swift:36, 63-72; ScanMetrics.swift; Models/ScanProgress.swift | units/Traversal.pas:177-178 (callback once per directory); opendisk.lpr:22-33 | Partial | Partial | od-31j.38 | No `checkingChanges` phase. The GUI polls unsynchronized fields every 120 ms (uMainForm.pas:144-154, 611-626). |
-| Unreadable-directory count | ScanMetrics.swift:22; TraversalScanner.swift:131 | units/Traversal.pas:132-133 (silently skipped) | Missing | Missing | — | Swift needs this count to show the "Couldn't Read This Location" state. |
+| Unreadable-directory count | ScanMetrics.swift:22; TraversalScanner.swift:131 | units/Traversal.pas (Unreadable); ScanTopology.pas | Done | Done | od-31j.43, od-31j.18.12 | 93a8b81; drives "Couldn't Read This Location" (07394ea). |
 | Partial-tree snapshots during the scan (500 ms to 15 s backoff) | ScanEngine.swift:12-33, 74-99; Services/DiskAnalyzer.swift:208-217 | — | Missing | Missing | — | |
-| CatalogScanner / SearchFS whole-volume enumeration | Services/Scanning/CatalogScanner.swift:5-125; SystemInterop/SearchFS.swift:31-291 | — | Missing | Missing | od-31j.19 | Nothing in the Swift app calls `CatalogScanner` or `CatalogSearch`; `ScanEngine` uses only `TraversalScanner`. Parity does not need it. |
+| CatalogScanner / SearchFS whole-volume enumeration | Services/Scanning/CatalogScanner.swift:5-125; SystemInterop/SearchFS.swift:31-291 | — | N/A | N/A | od-31j.19 | Nothing in the Swift app calls `CatalogScanner` or `CatalogSearch`; `ScanEngine` uses only `TraversalScanner`. Deferred (od-31j.19). |
 
 ## 2. Cache & incremental
 
@@ -62,9 +62,9 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Volume list: "Computer" (`/`) + browsable, readable, non-boot volumes with capacity | Services/DeviceMonitor.swift:19-60 | units/Volumes.pas:76-126; PlatformVolumes.pas:139-222 | Partial | Partial | od-31j.7, od-31j.27 | Swift sorts mounts by path (DeviceMonitor.swift:40); I found no sort in Pascal. Pascal uses `kCFURLEnumeratorSkipInvisibles` where Swift uses `.skipHiddenVolumes`. **Unverified** that the two filters select the same volumes. |
 | Capacity: available = max(free, important-usage), clamped to total; purgeable = available - free | Models/DeviceInfo.swift:23-35; DeviceMonitor.swift:62-81 | units/Volumes.pas:54-61; PlatformVolumes.pas:191-222 | Done | Partial | od-31j.18.7 | Pascal does not compute or show the purgeable amount. |
 | Live volume refresh | DeviceMonitor.swift:9-17 | gui/uMainForm.pas:254-261, 530-533 (Refresh button) | N/A | Done | od-31j.18.9 | The Swift source has no mount/unmount observer: `refresh()` runs only from `init`. The premise of od-31j.18.9 ("Swift refreshes on mount") is not supported by the source. |
-| Full Disk Access probe (`isGranted`) | Services/FullDiskAccess.swift:11-43 | — | Missing | Missing | od-31j.18.12 | |
-| FDA gate before scanning `/` + retry when the app becomes active | DiskAnalyzer.swift:54-58; Views/Analysis/DiskAnalysisView.swift:147-151 | — | N/A | Missing | od-31j.18.12 | |
-| FDA startup prompt (with suppression), open System Settings, relaunch | FullDiskAccess.swift:46-91; App/OpenDiskApp.swift:46-62 | — | N/A | Missing | od-31j.18.12 | |
+| Full Disk Access probe (`isGranted`) | Services/FullDiskAccess.swift:11-43 | units/PlatformFullDiskAccess.pas | Done | Done | od-31j.18.12 | 07394ea. Same probe paths and rule. |
+| FDA gate before scanning `/` + retry when the app becomes active | DiskAnalyzer.swift:54-58; Views/Analysis/DiskAnalysisView.swift:147-151 | gui/uMainForm.pas (StartScan, FormActivate) | N/A | Done | od-31j.18.12 | 07394ea. |
+| FDA startup prompt (with suppression), open System Settings, relaunch | FullDiskAccess.swift:46-91; App/OpenDiskApp.swift:46-62 | units/PlatformFullDiskAccess.pas (OpenFullDiskAccessSettings); PlatformShell.pas (LaunchNewInstance) | N/A | Partial | od-31j.18.12 | Open System Settings and Quit & Reopen exist (07394ea); the startup prompt with suppression does not. |
 | Settings window (FDA status, startup toggle, reset suppression) | Views/Settings/SettingsView.swift | — | N/A | Missing | — | |
 | Protected paths (system roots, home, ~/Library, /Users/*, /Volumes/*, /System/Volumes/*, ancestors) | Services/ProtectedPaths.swift:3-47 | units/ProtectedPaths.pas:38-133 | Done | Done | od-31j.9, od-31j.26 | Pascal adds a Windows variant (ProtectedPaths.pas:82-110). |
 | Sandbox folder grants (security-scoped bookmarks) | Services/ScanAccess.swift; Views/Main/DevicePickerView.swift:57-92, 109-139 | — | N/A | N/A | — | Applies only to the sandboxed Swift build. The Pascal app is not sandboxed. |
@@ -73,9 +73,9 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 
 | Feature | Swift ref | Pascal ref | Engine/CLI | GUI | Bead | Note |
 |---|---|---|---|---|---|---|
-| Name index + multi-token AND match, largest first, 500-result cap, scope All/Folders/Files | Services/Search/SearchIndex.swift:3-247 | units/SearchIndex.pas:21-136; opendisk.lpr:294-320 | Partial | Missing | od-31j.4, od-31j.18.5 | Pascal does a linear `Pos` scan. Ties are unordered (Swift breaks ties by name). There is no `totalMatches` count beyond the cap. |
-| Case/Unicode folding (`lowercased()` + NFC) | SearchIndex.swift:80-104 | units/SearchIndex.pas:38-41 (`LowerCase`) | Partial | Missing | od-31j.4 | FPC `LowerCase` folds ASCII only and does no NFC normalization. |
-| Skip unreachable nodes (detached by incremental updates) | SearchIndex.swift:58 (`reachabilityBitmap`) | — | Partial | Missing | — | Harmless in the CLI, which searches a fresh scan. It matters once the GUI searches an incrementally updated tree: detached nodes would still match. |
+| Name index + multi-token AND match, largest first, 500-result cap, scope All/Folders/Files | Services/Search/SearchIndex.swift:3-247 | units/SearchIndex.pas; opendisk.lpr (CmdSearch) | Done | Missing | od-31j.41, od-31j.18.5 | 93260b8: blob + longest-token sweep, 500-entry heap, size then name, TotalMatches. No GUI search yet. |
+| Case/Unicode folding (`lowercased()` + NFC) | SearchIndex.swift:80-104 | units/SearchIndex.pas (FoldName); PlatformTextFold.pas | Done | Missing | od-31j.41 | 93260b8: CFStringLowercase + NFC on macOS; other systems fold without NFC. |
+| Skip unreachable nodes (detached by incremental updates) | SearchIndex.swift:58 (`reachabilityBitmap`) | units/SearchIndex.pas; FileTree.pas (ReachabilityBitmap) | Done | Missing | od-31j.41 | 93260b8. |
 | Partial-index search while scanning ("results may be incomplete") | DiskAnalyzer.swift:214-216, 323-342; Views/Analysis/SearchResultsView.swift:57-61 | — | N/A | Missing | od-31j.18.5 | |
 | Search UI: toolbar `.searchable`, results list with location line, open result navigates | DiskAnalysisView.swift:152-162, 238-250, 417-424; SearchResultsView.swift | — | N/A | Missing | od-31j.18.5 | |
 
@@ -91,11 +91,11 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Expandable staged list (hover), per-row remove, Preview, Show in Finder, Open in Terminal | CollectorBar.swift:30-45, 265-284, 315-403 | — | N/A | Missing | od-31j.18.6, od-31j.18.15 | |
 | Drag out of the collector to unstage (keep zones) | Collector.swift:77-103; CollectorBar.swift:171-175 | — | N/A | Missing | od-31j.18.6 | |
 | Permanent-delete confirmation ("Delete N items?" / "Delete <size>") | CollectorBar.swift:99-110 | gui/uMainForm.pas:832-835 | N/A | Partial | — | Uses a modal `MessageDlg` (Yes/No), not a sheet with a destructive button. The wording differs. |
-| Delete execution: per-item, off the main thread; failures stay staged; clear undo | Collector.swift:132-160 | units/Collector.pas:245-275; PlatformRemove.pas:28-85 | Done | Partial | od-31j.33, od-31j.34 | The GUI runs `DeleteAll` on the UI thread (uMainForm.pas:836), so the window freezes during large deletes. |
+| Delete execution: per-item, off the main thread; failures stay staged; clear undo | Collector.swift:132-160 | units/Collector.pas; PlatformRemove.pas | Done | Partial | od-31j.33, od-31j.34 | PlatformRemove is descriptor-relative and iterative on Unix (7e2c079). The GUI still runs `DeleteAll` on the UI thread, so the window freezes during large deletes. |
 | Delete progress (current name, n of N, freed bytes, bar) | Collector.swift:14-25, 140-142; CollectorBar.swift:204-243 | — | N/A | Missing | — | |
 | Done state ("Freed X · N couldn't be removed", 2 s) | CollectorBar.swift:245-263, 299-307 | gui/uMainForm.pas:838-842 (status bar text) | N/A | Partial | — | |
 | Rescan the root after a delete | DiskAnalysisView.swift:444-448 | gui/uMainForm.pas:843 | N/A | Done | od-31j.11 | |
-| Purgeable/cache synthetic node: "Purgeable Space" row, chart, expands into the collector | Models/HiddenSpace.swift; DiskAnalyzer.swift:137-199, 236-250; DiskAnalysisView.swift:206-210, 465-469 | — | Missing | Missing | od-31j.20 | |
+| Purgeable/cache synthetic node: "Purgeable Space" row, chart, expands into the collector | Models/HiddenSpace.swift; DiskAnalyzer.swift:137-199, 236-250; DiskAnalysisView.swift:206-210, 465-469 | units/CleanableSpace.pas; PlatformCacheCatalog.pas | Partial | Missing | od-31j.20 | 9aa1682: catalogue, entries, totals, display order. Summary row, navigation, chart and collecting are not wired yet. |
 
 ## 6. Charts
 
@@ -104,13 +104,13 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | ChartItem tree (max depth 5, min fraction 0.0015, `hasHiddenChildren`) | Models/ChartItem.swift:23-82 | units/ChartItem.pas:45-46, 75-140 | Done | Done | od-31j.2 | Pascal declares `ckSynthetic` but never builds one (see od-31j.20). |
 | Rings layout geometry + hit test | Views/Charts/RingsChartLayout.swift:4-91 | units/RingsLayout.pas:103-194 | Done | Done | od-31j.2 | |
 | Palette (6 hues, 3 bands, depth intensity, highlight normalization) | Views/Charts/ChartPalette.swift:3-55 | gui/RingsChart.pas:116-167; units/RingsSVG.pas:27-65 | Done | Partial | od-31j.18.10 | The center disk is dark (`$0038322E`) in the GUI; Swift uses light grey `#D3D6D1`/`#E0E2DD`. The GUI also draws a hardcoded dark gradient background (RingsChart.pas:169-182). |
-| Antialiased arc paths | Views/Charts/RingsChartView.swift:210-234 | gui/RingsChart.pas:222-239 (`Polygon` of sampled points) | N/A | Partial | od-31j.18.11 | |
-| Static layer cache; redraw only the hover overlay | RingsChartView.swift:17-23, 148-160 | gui/RingsChart.pas:273-317 (full repaint on every hover change) | N/A | Missing | od-31j.18.14 | |
+| Antialiased arc paths | Views/Charts/RingsChartView.swift:210-234 | gui/PlatformChartCanvas.pas (Core Graphics arcs) | N/A | Done | od-31j.18.11 | ba740bb. |
+| Static layer cache; redraw only the hover overlay | RingsChartView.swift:17-23, 148-160 | gui/RingsChart.pas; PlatformChartCanvas.pas (TChartCanvasCache) | N/A | Done | od-31j.18.14 | ba740bb: cached at the window's backing scale; rebuilt on resize, scale or appearance change. |
 | Hover highlight of a segment | RingsChartView.swift:26-34, 128-145 | gui/RingsChart.pas:295, 299-327 | N/A | Done | od-31j.18.4 | |
 | Hover tooltip pill (name, size · %, edge flip) | Views/Charts/ChartHoverTip.swift:3-58 | — | N/A | Missing | od-31j.18.13 | |
 | Curved sector labels (thickness ≥ 12, arc ≥ 30, fit 85%, flipped on the lower half) | RingsChartView.swift:236-279 | gui/RingsChart.pas:259-270 (straight text at the bisector) | N/A | Partial | od-31j.18.4 | Different thresholds; no fit check, so labels can overflow. |
 | Center label (name + size, falls back to size only) | RingsChartView.swift:281-303 | gui/RingsChart.pas:196-220 | N/A | Partial | od-31j.18.4 | No width-fit fallback; colors differ. |
-| Continued-edge arc for hidden children | RingsChartView.swift:194-207 | gui/RingsChart.pas:241-257 (polyline) | N/A | Partial | od-31j.18.11 | |
+| Continued-edge arc for hidden children | RingsChartView.swift:194-207 | gui/PlatformChartCanvas.pas (StrokeContinuedEdge) | N/A | Done | od-31j.18.11 | ba740bb: Core Graphics arc. |
 | Click: center → back, directory → navigate | RingsChartView.swift:35-44 | gui/RingsChart.pas:329-343; uMainForm.pas:783-793 | N/A | Done | od-31j.11 | Pascal checks `DirectoryExists` on disk instead of the segment kind. |
 | Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | — | N/A | Missing | od-31j.18.6 | The context menu has no bead (see Gaps). |
 | Chart accessibility (label + per-segment elements/actions) | RingsChartView.swift:57-94 | — | N/A | Missing | — | |
@@ -189,13 +189,13 @@ Related GUI correctness beads outside od-31j.18: od-31j.12 (cache in the GUI), o
 
 Engine/CLI:
 1. ~~Scans don't pass `SubtreeAllowedDevices`~~ — fixed in CLI and GUI (od-31j.39).
-2. Data-volume path alias (§1).
-3. Boot volume group composition: `/System/Volumes/*` siblings, `merge`, drop `/Volumes` (§1).
-4. Parallel traversal workers (§1).
-5. Process I/O tuning: iopolicy and file-descriptor limit (§1).
-6. Unreadable-directory counting (§1). The "Couldn't Read" state in od-31j.18.12 depends on it.
+2. ~~Data-volume path alias (§1).~~ — fixed (od-31j.43, 93a8b81).
+3. ~~Boot volume group composition: `/System/Volumes/*` siblings, `merge`, drop `/Volumes` (§1).~~ — fixed (od-31j.43, 93a8b81).
+4. ~~Parallel traversal workers (§1).~~ — fixed (od-31j.44, 9fc76bc).
+5. ~~Process I/O tuning: iopolicy and file-descriptor limit (§1).~~ — fixed (od-31j.43, 93a8b81).
+6. ~~Unreadable-directory counting (§1).~~ — fixed (93a8b81; used by od-31j.18.12, 07394ea).
 7. Partial-tree snapshots during the scan (§1).
-8. Search: reachability filter, Unicode/NFC folding, name tiebreak, total-match count (§4).
+8. ~~Search: reachability filter, Unicode/NFC folding, name tiebreak, total-match count (§4).~~ — fixed (od-31j.41, 93260b8).
 9. ~~Byte formatting: decimal `ByteCountFormatter` semantics (§7).~~ — fixed (od-31j.40).
 10. Volume list sorted by path (§3).
 
@@ -230,10 +230,10 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 27 | 21 |
-| Partial | 8 | 23 |
-| Missing | 10 | 51 |
-| N/A | 58 | 8 |
+| Done | 36 | 31 |
+| Partial | 6 | 22 |
+| Missing | 2 | 41 |
+| N/A | 59 | 9 |
 | Unverified | 2 | 2 |
 
-Engine/CLI is mostly at parity, apart from the gaps in scan topology (allowed devices, boot volume group, Data-volume alias), parallelism, cancellation, partial snapshots and purgeable nodes. Most remaining work is GUI fidelity and interaction (od-31j.18.*).
+Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. Partial snapshots and the purgeable node are not finished. Most remaining work is GUI fidelity and interaction (od-31j.18.*).
