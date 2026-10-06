@@ -16,7 +16,7 @@ uses
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
-  PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus;
+  PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -54,6 +54,18 @@ type
     function Bytes: Int64;
     function Items: Integer;
     procedure SetProgress(ABytes: Int64; AItems: Integer);
+  end;
+
+  { DiskAnalyzer.skeletonItems: the root's first level, read off the UI
+    thread while the scan starts. }
+  TSkeletonThread = class(TThread)
+  private
+    FPath: string;
+  protected
+    procedure Execute; override;
+  public
+    Items: TSkeletonItems;
+    constructor Create(const APath: string);
   end;
 
   TMainForm = class(TForm)
@@ -118,6 +130,11 @@ type
     { Utilities/FileDrag.swift: the files of the in-app drag in flight,
       whether the chart pane is targeted, and the protected reason. }
     FDragFiles: array of TFolderItem;
+    { The skeleton listing shown until the scan's first tree. }
+    FSkeletonThread: TSkeletonThread;
+    FSkeleton: TSkeletonItems;
+    { "Building chart…" in the chart pane while only the skeleton lists. }
+    FChartBusy: TEmptyStateView;
     FDropTargeted: Boolean;
     FDragReject: string;
     FRejectTimer, FDragOutTimer: TTimer;
@@ -201,6 +218,7 @@ type
     procedure ChartMenuHookTick(Sender: TObject);
     procedure QuickLookRow(Row: Integer);
     procedure UpdateSubtitle(TotalBytes: Int64);
+    procedure ShowSkeleton;
     procedure ToolbarSearch(const Query: string);
     procedure SetUpToolbar;
     procedure AddMenuItem(const ACaption, Symbol: string; Handler: TNotifyEvent;
@@ -297,6 +315,9 @@ const
   CollectorDropBand = 64;
   { Search result rows: SearchRowBase - index into FSearchItems. }
   SearchRowBase = TNodeID(-1000);
+  { Skeleton rows: SkeletonRowBase - index into FSkeleton; checked before
+    the search range, which they lie below. }
+  SkeletonRowBase = TNodeID(-10000000);
 
 threadvar
   { The scan thread running on this OS thread: TScanProgress and
@@ -422,6 +443,18 @@ begin
     if ActiveScanThread = Self then
       ActiveScanThread := nil;
   end;
+end;
+
+constructor TSkeletonThread.Create(const APath: string);
+begin
+  FPath := APath;
+  FreeOnTerminate := False;
+  inherited Create(False);
+end;
+
+procedure TSkeletonThread.Execute;
+begin
+  Items := ReadSkeleton(FPath);
 end;
 
 constructor TMainForm.Create(AOwner: TComponent);
@@ -764,6 +797,12 @@ begin
   FChart.Align := alClient;
   FChart.OnSelect := @ChartSelect;
   FChart.OnContextPopup := @ChartContextPopup;
+  { chartPane: ProgressView("Building chart…") while chartRoot is nil. }
+  FChartBusy := TEmptyStateView.Create(Self);
+  FChartBusy.Parent := FChartPanel;
+  FChartBusy.Align := alClient;
+  FChartBusy.Color := CBg;
+  FChartBusy.Visible := False;
 
   { DiskAnalysisView chartPane: the CollectorBar under the chart,
     .padding(.horizontal, 12).padding(.bottom, 10); its list and notice
@@ -1037,6 +1076,38 @@ begin
   HideAnalysisState;
   StyleChrome;
   ShowWindowToolbar(Self, True);
+end;
+
+{ DiskAnalyzer.scanDirectory: the skeleton fills rootItems while nothing
+  else has (same scan, no tree yet); the chart pane says "Building
+  chart…" until the first tree. }
+procedure TMainForm.ShowSkeleton;
+var
+  Items: TSkeletonItems;
+  Total: Int64;
+  I: Integer;
+begin
+  FSkeletonThread.WaitFor;
+  Items := FSkeletonThread.Items;
+  FreeAndNil(FSkeletonThread);
+  if (FScanThread = nil) or (FTree <> nil) or (Length(Items) = 0) then
+    Exit;
+  FSkeleton := Items;
+  if FAnalysisState.Visible and FAnalysisState.Busy then
+  begin
+    HideAnalysisState;
+    FScanBar.Visible := True;
+  end;
+  FChartBusy.SetBusy('Building chart…');
+  FChartBusy.Visible := True;
+  FChartBusy.BringToFront;
+  RefreshList;
+  Total := 0;
+  for I := 0 to High(FSkeleton) do
+    Inc(Total, FSkeleton[I].Size);
+  { displayedTotalBytes = the skeleton's known sizes. }
+  FScanBar.SetTotals(Total, FList.Items.Count);
+  UpdateSubtitle(Total);
 end;
 
 { navigationSubtitle: the displayed total, none while it is zero. }
@@ -1358,6 +1429,14 @@ begin
   { Disks stays enabled: it cancels the scan. }
   FBackBtn.Enabled := False;
   FRefreshBtn.Enabled := False;
+  FSkeleton := nil;
+  if FSkeletonThread <> nil then
+  begin
+    { A previous read is one directory: let it finish. }
+    FSkeletonThread.WaitFor;
+    FreeAndNil(FSkeletonThread);
+  end;
+  FSkeletonThread := TSkeletonThread.Create(ResolveDataVolumeAlias(Expanded));
   FScanThread := TScanThread.Create(Expanded);
   FScanThread.Start;
   FPoll.Enabled := True;
@@ -1378,6 +1457,8 @@ begin
     Phase := sspScanning;
   FScanBar.SetScanning(FScanThread.Bytes, FScanThread.Items, Phase,
     ScanFraction(FScanThread.Bytes), FScanStart);
+  if (FSkeletonThread <> nil) and FSkeletonThread.Finished then
+    ShowSkeleton;
   ShowPartial(FScanThread.TakePartial);
   if FScanThread.Finished then
   begin
@@ -1575,6 +1656,13 @@ var
 begin
   if FTree = nil then
     Exit;
+  { The first tree replaces the skeleton and "Building chart…". }
+  FSkeleton := nil;
+  if FChartBusy.Visible then
+  begin
+    FChartBusy.SetState('', '', '', [], []);
+    FChartBusy.Visible := False;
+  end;
   { The first rows replace "Preparing scan…". }
   if FAnalysisState.Visible and FAnalysisState.Busy then
   begin
@@ -1832,6 +1920,14 @@ begin
       Exit;
     end;
     UpdateSearchEmpty;
+    if (FTree = nil) and (FSkeleton <> nil) then
+    begin
+      for I := 0 to High(FSkeleton) do
+        if not FCollector.Contains(FSkeleton[I].Path) then
+          AddRow(SkeletonRowBase - I, FSkeleton[I].Name, FSkeleton[I].Size);
+      SortListRows;
+      Exit;
+    end;
     if FTree = nil then
       Exit;
     if FCurrentPath = HiddenSpaceSentinelPath then
@@ -1897,6 +1993,8 @@ function TMainForm.RowSizeOf(ID: TNodeID): Int64;
 begin
   if ID = PurgeableRowID then
     Result := FPurgeableTotal
+  else if ID <= SkeletonRowBase then
+    Result := FSkeleton[SkeletonRowBase - ID].Size
   else if ID <= SearchRowBase then
     Result := FSearchItems[SearchRowBase - ID].Size
   else
@@ -2320,7 +2418,16 @@ begin
   if (Index < 0) or (Index >= FList.Items.Count) then
     Exit;
   ID := TNodeID(PtrUInt(FList.Items.Objects[Index]));
-  if ID <= SearchRowBase then
+  if ID <= SkeletonRowBase then
+    with FSkeleton[SkeletonRowBase - ID] do
+    begin
+      Item.Name := Name;
+      Item.Path := Path;
+      Item.Size := Size;
+      Item.IsDirectory := IsDirectory;
+      Item.ItemCount := 0;
+    end
+  else if ID <= SearchRowBase then
     Item := FSearchItems[SearchRowBase - ID]
   else if ID = PurgeableRowID then
   begin
@@ -2670,17 +2777,30 @@ var
   Keep: Integer;
   NameTop, Right, SizeLeft, CapLeft, MidY, W, TextLeft, Count: Integer;
   RowSize: Int64;
+  SizeKnown: Boolean;
   FullName, Location: string;
   IconRect: TRect;
   Frac: Double;
 begin
   LB := Control as TListBox;
   C := LB.Canvas;
-  if (FTree = nil) or (Index < 0) or (Index >= LB.Items.Count) then
+  if (Index < 0) or (Index >= LB.Items.Count) then
     Exit;
   Node := TNodeID(PtrUInt(LB.Items.Objects[Index]));
+  if (FTree = nil) and (Node > SkeletonRowBase) then
+    Exit;
   Location := '';
-  if Node <= SearchRowBase then
+  SizeKnown := True;
+  if Node <= SkeletonRowBase then
+  begin
+    IsDir := FSkeleton[SkeletonRowBase - Node].IsDirectory;
+    RowSize := FSkeleton[SkeletonRowBase - Node].Size;
+    FullName := FSkeleton[SkeletonRowBase - Node].Name;
+    Count := 0;
+    { FolderItem.sizeIsKnown: '--' and no capsule for folders. }
+    SizeKnown := FSkeleton[SkeletonRowBase - Node].SizeKnown;
+  end
+  else if Node <= SearchRowBase then
   begin
     { SearchResultsView row: FolderRowView with the parent folder as its
       location line. }
@@ -2780,20 +2900,26 @@ begin
   Right := Right - ChevronW - Gap;
 
   { size, right-aligned in its fixed column }
-  SizeText := FormatFileSize(RowSize);
+  if SizeKnown then
+    SizeText := FormatFileSize(RowSize)
+  else
+    SizeText := '--';
   { System font: CLAUDE.md forbids a monospaced font in the file list, and
     LCL cannot request monospaced digits; the fixed right-aligned column
     keeps sizes from shifting. }
   C.Font.Name := 'default';
   C.Font.Size := 12;
   C.Font.Style := [];
-  C.Font.Color := Secondary;
+  if SizeKnown then
+    C.Font.Color := Secondary
+  else
+    C.Font.Color := Tertiary;
   SizeLeft := Right - SizeW;
   C.TextOut(Right - C.TextWidth(SizeText), MidY - C.TextHeight(SizeText) div 2, SizeText);
   Right := SizeLeft - Gap;
 
   { size capsule against the largest sibling }
-  if FListMaxSize > 0 then
+  if (FListMaxSize > 0) and SizeKnown then
   begin
     Frac := RowSize / FListMaxSize;
     if Frac > 1 then
@@ -2820,6 +2946,8 @@ begin
   { FolderRowView: a synthetic folder gets the generic folder icon. }
   if Node = PurgeableRowID then
     DrawFolderIcon(C, IconRect)
+  else if Node <= SkeletonRowBase then
+    DrawFileIcon(C, IconRect, FSkeleton[SkeletonRowBase - Node].Path, IsDir)
   else if Node <= SearchRowBase then
     DrawFileIcon(C, IconRect, FSearchItems[SearchRowBase - Node].Path, IsDir)
   else
@@ -2930,6 +3058,9 @@ begin
   if FList.ItemIndex < 0 then
     Exit;
   Child := TNodeID(PtrUInt(FList.Items.Objects[FList.ItemIndex]));
+  { Skeleton rows have no tree to open yet. }
+  if Child <= SkeletonRowBase then
+    Exit;
   if Child <= SearchRowBase then
   begin
     OpenSearchResult(SearchRowBase - Child);

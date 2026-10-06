@@ -114,7 +114,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Click: center → back, directory → navigate | RingsChartView.swift:35-44 | gui/RingsChart.pas:329-343; uMainForm.pas:783-793 | N/A | Done | od-31j.11 | Pascal checks `DirectoryExists` on disk instead of the segment kind. |
 | Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | gui/RingsChart.pas (OnDragSegment, DraggableSegmentAt); gui/uMainForm.pas | N/A | Done | od-31j.18.6 | Segment drag (87e2000) and FileActionsMenu on draggable segments (616c3cf). |
 | Chart accessibility (label + per-segment elements/actions) | RingsChartView.swift:57-94 | — | N/A | Missing | — | |
-| Coalesced chart rebuild; "Building chart…" placeholder | DiskAnalyzer.swift:256-281; DiskAnalysisView.swift:430-439 | gui/uMainForm.pas (chart built with each tree snapshot) | N/A | N/A | od-31j.18.4 | Swift lays the chart out asynchronously and shows "Building chart…" until it is ready; here the chart is built synchronously from every snapshot, so there is no gap to cover. |
+| Coalesced chart rebuild; "Building chart…" placeholder | DiskAnalyzer.swift:256-281; DiskAnalysisView.swift:430-439 | gui/uMainForm.pas (ShowSkeleton, FChartBusy) | N/A | Done | od-31j.18.4 | "Building chart…" shows in the chart pane while the skeleton lists and no tree exists. The chart itself is built synchronously from each snapshot, so there is no separate coalescing. |
 | SVG/HTML rings export (`opendisk view`) | — | units/RingsSVG.pas; opendisk.lpr:258-292 | N/A | N/A | — | Pascal only. |
 
 ## 7. GUI shell & navigation
@@ -138,7 +138,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | gui/PlatformQuickLook.pas; gui/uMainForm.pas | N/A | Done | — | 476d552: Space toggles for the selected row, arrow keys move through the visible rows, centred on the window. |
 | Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | gui/PlatformFileDrag.pas; gui/uMainForm.pas (FileDragEnded) | N/A | Done | od-31j.18.6 | Rows and segments export file URLs, copy or move outside the app (87e2000; checked by hand); when a dragged file is gone after the drop, the view refreshes (filesMovedNotification). |
 | Display limits: 100 children below the root, hide < 1 KiB | DiskAnalyzer.swift:7-8, 344-368 | gui/uMainForm.pas:717-729 (shows every child > 0 bytes) | N/A | Done | od-31j.48 | a5de8ce. |
-| Skeleton listing before the first results | DiskAnalyzer.swift:89-96, 370-417 | — | N/A | Missing | — | |
+| Skeleton listing before the first results | DiskAnalyzer.swift:89-96, 370-417 | units/SkeletonListing.pas; gui/uMainForm.pas (TSkeletonThread, ShowSkeleton) | N/A | Done | — | The root's first level, read off the UI thread at scan start: folders by name with "--" sizes, files by allocated size; dot-names and links left out (UF_HIDDEN is not available from the reader). |
 | Scanning placeholder ("Preparing scan…") | DiskAnalysisView.swift:80-83 | gui/EmptyStateView.pas (SetBusy); gui/uMainForm.pas (StartScan, ShowNode) | N/A | Done | od-31j.18.4 | A spinner and "Preparing scan…" over the body, no status bar, until the first tree. |
 | Empty / FDA-required / unreadable states | DiskAnalysisView.swift:508-542 | gui/uMainForm.pas:573-576, 639-644 (`MessageDlg`, status text) | N/A | Done | od-31j.18.12 | 07394ea. |
 | Scan status bar: phase text, progress bar vs. used space, files/sec, "Scanned in", total · items | Views/Components/ScanStatusBar.swift:15-77; DiskAnalysisView.swift:484-487 | gui/uMainForm.pas:618-620, 650-655 (`TStatusBar` simple text) | N/A | Done | od-31j.18.7 | 5ae2396; checking-changes phase since 9b2f060. |
@@ -231,10 +231,10 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 83 |
+| Done | 41 | 85 |
 | Partial | 3 | 3 |
-| Missing | 1 | 7 |
-| N/A | 58 | 10 |
+| Missing | 1 | 6 |
+| N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 
 Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. It also has Quick Look and the row, segment and collector menus. Open: keyboard hints in menus and the Quick Look sheet for collector previews.
