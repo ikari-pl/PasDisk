@@ -36,8 +36,12 @@ type
     FItemCount: Integer;
     FHasCapacity: Boolean;
     FCapTotal, FCapAvailable, FCapPurgeable: Int64;
+    { What VoiceOver was last told, to rebuild only on a change. }
+    FAccessibleKey: string;
     FTimer: TTimer;
     FAnimStart: QWord;
+    procedure UpdateAccessibility(const LeftText: string; const LeftR: TRect;
+      const CapR: TRect; const TotalText: string; const TotalR: TRect);
     procedure Tick(Sender: TObject);
     procedure UpdateAnimation;
     procedure UpdateHeight;
@@ -68,7 +72,7 @@ type
 implementation
 
 uses
-  LCLType, LCLIntf, GuiColors, Formatters, PlatformLocale, DesignTokens;
+  LCLType, LCLIntf, GuiColors, Formatters, PlatformLocale, DesignTokens, PlatformChartAccessibility;
 
 const
   FootnoteSize = 10;
@@ -376,8 +380,10 @@ var
   ItemsText, BytesText, CapText, LeftText, Rate: string;
   ItemsW, BytesW, CapW: Integer;
   Frac: Double;
-  R: TRect;
+  R, LeftR, CapR, TotalR: TRect;
 begin
+  LeftR := Rect(0, 0, 0, 0);
+  CapR := Rect(0, 0, 0, 0);
   Bg := ColorToRGB(Color);
   Secondary := SecondaryTextColor(Bg);
   Tertiary := RGBToColor((Red(Secondary) + Red(Bg)) div 2,
@@ -413,6 +419,7 @@ begin
   ItemsW := Canvas.TextWidth(ItemsText);
   Canvas.Font.Color := Secondary;
   Canvas.TextOut(Right - ItemsW, TextY, ItemsText);
+  TotalR := Rect(Right - ItemsW, TextY, Right, TextY + TextH);
   Dec(Right, ItemsW + Spacing);
 
   Canvas.Font.Style := [fsBold];
@@ -420,6 +427,7 @@ begin
   BytesText := FormatFileSize(FTotalBytes);
   BytesW := TabularWidth(BytesText);
   DrawTabular(Right - BytesW, TextY, BytesText);
+  TotalR.Left := Right - BytesW;
   Dec(Right, BytesW);
   Canvas.Font.Style := [];
 
@@ -430,6 +438,7 @@ begin
     CapW := TabularWidth(CapText);
     Canvas.Font.Color := Secondary;
     DrawTabular(Right - CapW, TextY, CapText);
+    CapR := Rect(Right - CapW, TextY, Right, TextY + TextH);
     Dec(Right, CapW + CapacityGap);
     if FCapTotal > 0 then
       Frac := (FCapTotal - FCapAvailable) / FCapTotal
@@ -440,6 +449,7 @@ begin
     DrawLinearBar(R, Frac);
     Canvas.Brush.Style := bsClear;
     Dec(Right, CapacityBarWidth);
+    CapR.Left := Right;
   end;
   LeftEnd := Right - MinSpacer;
 
@@ -476,6 +486,7 @@ begin
       { lineLimit(1): truncate the tail. }
       DrawText(Canvas.Handle, PChar(LeftText), Length(LeftText), R,
         DT_SINGLELINE or DT_END_ELLIPSIS or DT_NOPREFIX);
+      LeftR := Rect(X, TextY, X + W, TextY + TextH);
       Inc(X, Min(W, Canvas.TextWidth(LeftText)) + Spacing);
       if (Rate <> '') and (X + Canvas.TextWidth(Rate) <= LeftEnd) then
       begin
@@ -484,6 +495,52 @@ begin
       end;
     end;
   end;
+  UpdateAccessibility(LeftText, LeftR, CapR, BytesText + ' ' + ItemsText, TotalR);
+end;
+
+{ SwiftUI exposes the bar's texts; the capacity readout is one element,
+  "Disk space" with "<used> used, <available> available of <total>"
+  (ScanStatusBar.swift:96-98). }
+procedure TScanStatusBar.UpdateAccessibility(const LeftText: string; const LeftR: TRect;
+  const CapR: TRect; const TotalText: string; const TotalR: TRect);
+var
+  Items: array of TChartAccessibleItem;
+  Key, CapValue: string;
+  N: Integer;
+begin
+  CapValue := '';
+  if FHasCapacity then
+    CapValue := FormatFileSize(FCapTotal - FCapAvailable) + ' used, ' +
+      FormatFileSize(FCapAvailable) + ' available of ' + FormatFileSize(FCapTotal);
+  Key := LeftText + #1 + CapValue + #1 + TotalText;
+  if Key = FAccessibleKey then
+    Exit;
+  FAccessibleKey := Key;
+  SetLength(Items, 3);
+  N := 0;
+  if LeftText <> '' then
+  begin
+    Items[N].ItemLabel := LeftText;
+    Items[N].Value := '';
+    Items[N].IsButton := False;
+    Items[N].Bounds := LeftR;
+    Inc(N);
+  end;
+  if CapValue <> '' then
+  begin
+    Items[N].ItemLabel := 'Disk space';
+    Items[N].Value := CapValue;
+    Items[N].IsButton := False;
+    Items[N].Bounds := CapR;
+    Inc(N);
+  end;
+  Items[N].ItemLabel := TotalText;
+  Items[N].Value := '';
+  Items[N].IsButton := False;
+  Items[N].Bounds := TotalR;
+  Inc(N);
+  SetLength(Items, N);
+  SetChartAccessibility(Self, '', Items, nil);
 end;
 
 initialization

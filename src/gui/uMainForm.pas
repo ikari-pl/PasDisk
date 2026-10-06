@@ -239,6 +239,7 @@ type
     procedure SplitterDrag(Sender: TObject; var NewWidth: Integer);
     procedure MenuQuickLookClick(Sender: TObject);
     procedure QuickLookHookTick(Sender: TObject);
+    procedure A11yDumpTick(Sender: TObject);
     procedure CollectorRowMenu(Sender: TObject; const Path: string;
       const ScreenPt: TPoint);
     procedure CollectorPreviewClick(Sender: TObject);
@@ -1611,10 +1612,13 @@ begin
       end;
     { Automation: OPENDISK_GUI_A11Y_DUMP=1 prints the chart's accessibility. }
     if GetEnvironmentVariable('OPENDISK_GUI_A11Y_DUMP') = '1' then
-    begin
-      WriteLn(DescribeAccessibility(FChart));
-      Flush(Output);
-    end;
+      with TTimer.Create(Self) do
+      begin
+        { After a paint: the status bar describes what it drew. }
+        Interval := 800;
+        OnTimer := @A11yDumpTick;
+        Enabled := True;
+      end;
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
     if GetEnvironmentVariable('OPENDISK_GUI_MENU') <> '' then
       with TTimer.Create(Self) do
@@ -2771,6 +2775,14 @@ end;
 procedure TMainForm.CollectorRemoveClick(Sender: TObject);
 begin
   CollectorRemove(nil, FMenuItem.Path);
+end;
+
+procedure TMainForm.A11yDumpTick(Sender: TObject);
+begin
+  (Sender as TTimer).Enabled := False;
+  WriteLn('chart ', DescribeAccessibility(FChart));
+  WriteLn('status bar ', DescribeAccessibility(FScanBar));
+  Flush(Output);
 end;
 
 procedure TMainForm.QuickLookHookTick(Sender: TObject);

@@ -142,7 +142,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Scanning placeholder ("Preparing scan…") | DiskAnalysisView.swift:80-83 | gui/EmptyStateView.pas (SetBusy); gui/uMainForm.pas (StartScan, ShowNode) | N/A | Done | od-31j.18.4 | A spinner and "Preparing scan…" over the body, no status bar, until the first tree. |
 | Empty / FDA-required / unreadable states | DiskAnalysisView.swift:508-542 | gui/uMainForm.pas:573-576, 639-644 (`MessageDlg`, status text) | N/A | Done | od-31j.18.12 | 07394ea. |
 | Scan status bar: phase text, progress bar vs. used space, files/sec, "Scanned in", total · items | Views/Components/ScanStatusBar.swift:15-77; DiskAnalysisView.swift:484-487 | gui/uMainForm.pas:618-620, 650-655 (`TStatusBar` simple text) | N/A | Done | od-31j.18.7 | 5ae2396; checking-changes phase since 9b2f060. |
-| Status bar capacity readout (bar + "X available of Y", purgeable tooltip, a11y) | ScanStatusBar.swift:60-112; DiskAnalysisView.swift:134-137, 489-494 | gui/uMainForm.pas:650-653 (text "volume used / total") | N/A | Partial | od-31j.18.7 | Bar, text and hint (5ae2396); no accessibility element. |
+| Status bar capacity readout (bar + "X available of Y", purgeable tooltip, a11y) | ScanStatusBar.swift:60-112; DiskAnalysisView.swift:134-137, 489-494 | gui/uMainForm.pas:650-653 (text "volume used / total") | N/A | Done | od-31j.18.7 | Bar, text and hint (5ae2396); VoiceOver gets the status text, "Disk space" with "<used> used, <available> available of <total>", and the totals (ScanStatusBar.UpdateAccessibility). |
 | Semantic system colors (light/dark) | Swift uses system materials throughout | gui/uMainForm.pas, RingsChart.pas, GuiColors.pas, PlatformAppearance.pas | N/A | Done | od-31j.18.10 | d2ba636. Dark mode judged from source (host in Light). |
 | Typography/spacing tokens | SwiftUI styles in the referenced views; CLAUDE.md spacing scale | gui/DesignTokens.pas; listed GUI units | N/A | Done | od-31j.18.8 | c188a17. Sizes measured from NSFont.preferredFont(forTextStyle:) on macOS. |
 | Restrained motion (hover fades, collector drawer, chart transition) | CollectorBar.swift:89-95; ScanResultsView.swift:29 | — | N/A | Missing | od-31j.18.15 | |
@@ -231,8 +231,8 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 87 |
-| Partial | 3 | 3 |
+| Done | 41 | 88 |
+| Partial | 3 | 2 |
 | Missing | 1 | 4 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
