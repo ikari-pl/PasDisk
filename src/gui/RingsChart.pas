@@ -7,7 +7,8 @@ unit RingsChart;
 interface
 
 uses
-  Classes, SysUtils, Math, Graphics, Controls, ChartItem, Formatters, RingsLayout;
+  Classes, SysUtils, Math, Graphics, Controls, ChartItem, Formatters, RingsLayout,
+  GuiColors;
 
 type
   TRingSelectEvent = procedure(Sender: TObject; const Path: string;
@@ -49,7 +50,7 @@ begin
   FOwnsRoot := False;
   FLayout := nil;
   DoubleBuffered := True;
-  Color := $001C1A18;
+  Color := clWindow;
 end;
 
 destructor TRingsChart.Destroy;
@@ -112,6 +113,20 @@ begin
     Round(B1 + (B2 - B1) * T));
 end;
 
+function ContrastTextColor(Background: TColor): TColor;
+var
+  ResolvedBackground: TColor;
+  Luma: Integer;
+begin
+  ResolvedBackground := ColorToRGB(Background);
+  Luma := (Red(ResolvedBackground) * 299 + Green(ResolvedBackground) * 587 +
+    Blue(ResolvedBackground) * 114) div 1000;
+  if Luma >= 150 then
+    Result := ColorToRGB(clWindowText)
+  else
+    Result := RGBToColor(255, 255, 255);
+end;
+
 { Port of ChartPalette.fill }
 function TRingsChart.ColorFor(ColorPosition: Double; Depth: Integer;
   Highlighted: Boolean): TColor;
@@ -135,9 +150,9 @@ begin
   if Depth = 0 then
   begin
     if Highlighted then
-      Exit($004A4540)
+      Exit(clHighlight)
     else
-      Exit($0038322E);
+      Exit(clBtnFace);
   end;
   Clamped := ColorPosition;
   if not (Clamped = Clamped) then
@@ -167,18 +182,10 @@ begin
 end;
 
 procedure TRingsChart.DrawBackground(ACanvas: TCanvas; const R: TRect);
-var
-  Y: Integer;
-  T: Double;
-  C: TColor;
 begin
-  for Y := R.Top to R.Bottom - 1 do
-  begin
-    T := (Y - R.Top) / Max(1, R.Bottom - R.Top);
-    C := Blend($00201C1A, $00161210, T);
-    ACanvas.Pen.Color := C;
-    ACanvas.Line(R.Left, Y, R.Right, Y);
-  end;
+  ACanvas.Brush.Color := clWindow;
+  ACanvas.Brush.Style := bsSolid;
+  ACanvas.FillRect(R);
 end;
 
 procedure TRingsChart.DrawSegment(ACanvas: TCanvas; Seg: TRingSegment;
@@ -190,7 +197,8 @@ var
   SX, SY: Integer;
 begin
   ACanvas.Brush.Color := ColorFor(Seg.ColorPosition, Seg.Depth, Highlighted);
-  ACanvas.Pen.Color := $00201814;
+  ACanvas.Brush.Style := bsSolid;
+  ACanvas.Pen.Color := clBtnShadow;
   ACanvas.Pen.Width := 1;
 
   if Seg.Depth = 0 then
@@ -200,7 +208,7 @@ begin
       Round(FLayout.CenterY - Seg.OuterRadius),
       Round(FLayout.CenterX + Seg.OuterRadius),
       Round(FLayout.CenterY + Seg.OuterRadius));
-    ACanvas.Font.Color := $00F2EEE8;
+    ACanvas.Font.Color := ContrastTextColor(ACanvas.Brush.Color);
     ACanvas.Font.Style := [fsBold];
     ACanvas.Font.Size := 11;
     ACanvas.Brush.Style := bsClear;
@@ -210,7 +218,7 @@ begin
       Seg.Name);
     ACanvas.Font.Style := [];
     ACanvas.Font.Size := 9;
-    ACanvas.Font.Color := $009A9188;
+    ACanvas.Font.Color := ContrastTextColor(ACanvas.Brush.Color);
     ACanvas.TextOut(
       Round(FLayout.CenterX) - ACanvas.TextWidth(FormatFileSize(Seg.Size)) div 2,
       Round(FLayout.CenterY) + 2,
@@ -260,7 +268,7 @@ begin
   if (Seg.Sweep * Mid > 36) and (FLayout.Thickness >= 14) then
   begin
     ACanvas.Font.Size := 8;
-    ACanvas.Font.Color := $00F2EEE8;
+    ACanvas.Font.Color := ContrastTextColor(ACanvas.Brush.Color);
     ACanvas.Brush.Style := bsClear;
     SX := Round(FLayout.CenterX + Cos(A0 + Seg.Sweep / 2) * Mid);
     SY := Round(FLayout.CenterY + Sin(A0 + Seg.Sweep / 2) * Mid);
@@ -280,7 +288,7 @@ begin
   DrawBackground(Canvas, R);
   if FRoot = nil then
   begin
-    Canvas.Font.Color := $009A9188;
+    Canvas.Font.Color := SecondaryTextColor(clWindow);
     Canvas.Font.Size := 12;
     Canvas.TextOut(R.Left + 24, R.Top + 24, 'Rings appear after a scan.');
     Exit;

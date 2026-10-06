@@ -12,7 +12,8 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
-  ChartItem, Formatters, Collector, ProtectedPaths, Volumes;
+  ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformAppearance,
+  GuiColors;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -70,8 +71,8 @@ type
     FRootName: string;
     FRootTotal: QWord;
     FRootFree: QWord;
-    FScanThread: TScanThread;
-    FPoll: TTimer;
+     FScanThread: TScanThread;
+     FPoll: TTimer;
     FBreadcrumbs: TStringList;
     procedure BuildUI;
     procedure ShowPicker;
@@ -79,7 +80,9 @@ type
     procedure RefreshVolumes;
     procedure StyleChrome;
     procedure StartScan(const APath, AName: string; Total, FreeBytes: QWord);
-    procedure OnPoll(Sender: TObject);
+     procedure OnPoll(Sender: TObject);
+     procedure OnThemeChange(Sender: TObject);
+     procedure ApplyTheme;
     procedure ScanFinished;
     procedure ShowNode(const APath: string);
     procedure RefreshList;
@@ -112,16 +115,14 @@ uses
   LCLType, LCLIntf, PlatformFS;
 
 const
-  CBg      = $001C1A18; { near-black warm }
-  CPanel   = $00262220;
-  CPanel2  = $002E2926;
-  CRule    = $003D3733;
-  CInk     = $00F2EEE8;
-  CMuted   = $009A9188;
-  CAccent  = $00E48435; { steel-blue in BGR — matches rings palette }
-  CBarTrack = $00403834;
-  CBarFill = $0035A0E0; { warm amber fill }
-  CDanger  = $00333AE0;
+  { LCL system colors map to semantic Cocoa colors on macOS. }
+  CBg       = clWindow;
+  CPanel    = clBtnFace;
+  CPanel2   = cl3DLight;
+  CInk      = clWindowText;
+  CAccent   = clHighlight;
+  CBarTrack = clBtnShadow;
+  CBarFill  = clHighlight;
 
 var
   ActiveScanThread: TScanThread;
@@ -193,6 +194,7 @@ begin
   FPoll.Interval := 120;
   FPoll.Enabled := False;
   FPoll.OnTimer := @OnPoll;
+  WatchAppearanceChanges(@OnThemeChange);
   ShowPicker;
   RefreshVolumes;
 end;
@@ -224,7 +226,7 @@ begin
   FPickerSub.Parent := FPicker;
   FPickerSub.Caption := 'Select a disk';
   FPickerSub.Font.Size := 13;
-  FPickerSub.Font.Color := CMuted;
+  FPickerSub.Font.Color := SecondaryTextColor(CBg);
   FPickerSub.Left := 50;
   FPickerSub.Top := 86;
 
@@ -321,7 +323,7 @@ begin
   FCollectorLabel.Parent := FCollectorPanel;
   FCollectorLabel.Left := 20;
   FCollectorLabel.Top := 18;
-  FCollectorLabel.Font.Color := CMuted;
+  FCollectorLabel.Font.Color := SecondaryTextColor(CPanel2);
   FCollectorLabel.Caption := 'Collector empty — double-click a file to stage deletion.';
 
   FDeleteButton := TButton.Create(Self);
@@ -356,7 +358,7 @@ begin
   FListHeader.BorderSpacing.Left := 16;
   FListHeader.Caption := 'Largest first';
   FListHeader.Font.Size := 10;
-  FListHeader.Font.Color := CMuted;
+  FListHeader.Font.Color := SecondaryTextColor(CPanel);
 
   FList := TListBox.Create(Self);
   FList.Parent := FListPanel;
@@ -381,9 +383,41 @@ begin
   FChart.OnSelect := @ChartSelect;
 end;
 
-procedure TMainForm.StyleChrome;
+procedure TMainForm.ApplyTheme;
 begin
   Color := CBg;
+  FPicker.Color := CBg;
+  FAnalysis.Color := CBg;
+  FBody.Color := CBg;
+  FChartPanel.Color := CBg;
+  FNav.Color := CPanel;
+  FListPanel.Color := CPanel;
+  FVolList.Color := CPanel;
+  FList.Color := CPanel;
+  FCollectorPanel.Color := CPanel2;
+
+  FPickerTitle.Font.Color := CInk;
+  FPickerSub.Font.Color := SecondaryTextColor(CBg);
+  FCrumb.Font.Color := CInk;
+  FCollectorLabel.Font.Color := SecondaryTextColor(CPanel2);
+  FListHeader.Font.Color := SecondaryTextColor(CPanel);
+  FList.Font.Color := CInk;
+  FChart.Color := CBg;
+
+  Invalidate;
+  FVolList.Invalidate;
+  FList.Invalidate;
+  FChart.Invalidate;
+end;
+
+procedure TMainForm.OnThemeChange(Sender: TObject);
+begin
+  ApplyTheme;
+end;
+
+procedure TMainForm.StyleChrome;
+begin
+  ApplyTheme;
   FRefreshBtn.Left := Width - FRefreshBtn.Width - 24;
   FDeleteButton.Left := Width - FDeleteButton.Width - 24;
 end;
@@ -451,18 +485,32 @@ begin
   Vol := FVolumes[Index];
   Selected := odSelected in State;
 
+  LB.Canvas.Brush.Style := bsSolid;
   if Selected then
-    LB.Canvas.Brush.Color := CPanel2
-  else
-    LB.Canvas.Brush.Color := CPanel;
-  LB.Canvas.FillRect(ARect);
+   begin
+      LB.Canvas.Brush.Color := ColorToRGB(clHighlight);
+      LB.Canvas.Font.Color := ColorToRGB(clHighlightText);
+   end
+   else
+      LB.Canvas.Brush.Color := ColorToRGB(CPanel);
+   LB.Canvas.FillRect(ARect);
 
   { left accent }
-  LB.Canvas.Brush.Color := CAccent;
-  LB.Canvas.FillRect(Rect(ARect.Left, ARect.Top + 10, ARect.Left + 3, ARect.Bottom - 10));
+  if not Selected then
+  begin
+    LB.Canvas.Brush.Color := ColorToRGB(CAccent);
+    LB.Canvas.FillRect(Rect(ARect.Left, ARect.Top + 10, ARect.Left + 3, ARect.Bottom - 10));
+  end;
 
+  { Text draws transparently over the row background; leaving the accent
+    brush active paints it behind the text on Cocoa. }
+  if Selected then
+    LB.Canvas.Brush.Color := ColorToRGB(clHighlight)
+  else
+    LB.Canvas.Brush.Color := ColorToRGB(CPanel);
   LB.Canvas.Brush.Style := bsClear;
-  LB.Canvas.Font.Color := CInk;
+   if not Selected then
+      LB.Canvas.Font.Color := ColorToRGB(CInk);
   LB.Canvas.Font.Size := 13;
   LB.Canvas.Font.Style := [fsBold];
   LB.Canvas.TextOut(ARect.Left + 16, ARect.Top + 10, Vol.Name);
@@ -478,7 +526,11 @@ begin
 
   LB.Canvas.Font.Size := 10;
   LB.Canvas.Font.Style := [];
-  LB.Canvas.Font.Color := CMuted;
+  if Selected then
+     LB.Canvas.Font.Color := ColorToRGB(clHighlightText)
+   else
+     LB.Canvas.Font.Color := SecondaryTextColor(CPanel);
+  LB.Canvas.Brush.Style := bsClear;
   LB.Canvas.TextOut(ARect.Left + 16, ARect.Top + 32, Line2);
 
   if Vol.TotalBytes > 0 then
@@ -488,11 +540,14 @@ begin
     if UsedFrac > 1 then UsedFrac := 1;
     Bar := Rect(ARect.Right - 140, ARect.Top + 28, ARect.Right - 16, ARect.Top + 36);
     LB.Canvas.Brush.Style := bsSolid;
-    LB.Canvas.Brush.Color := CBarTrack;
+    LB.Canvas.Brush.Color := ColorToRGB(CBarTrack);
     LB.Canvas.FillRect(Bar);
     Fill := Bar;
     Fill.Right := Bar.Left + Round((Bar.Right - Bar.Left) * UsedFrac);
-    LB.Canvas.Brush.Color := CBarFill;
+    if Selected then
+      LB.Canvas.Brush.Color := ColorToRGB(clHighlightText)
+    else
+      LB.Canvas.Brush.Color := ColorToRGB(CBarFill);
     if Fill.Right > Fill.Left then
       LB.Canvas.FillRect(Fill);
   end;
@@ -534,6 +589,7 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  StopWatchingAppearance;
   if FScanThread <> nil then
   begin
     FScanThread.Terminate;
