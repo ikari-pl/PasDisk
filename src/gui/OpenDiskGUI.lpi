@@ -64,6 +64,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="CollectorBarView.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="ChartHoverTip.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

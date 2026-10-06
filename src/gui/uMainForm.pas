@@ -14,7 +14,8 @@ uses
   StdCtrls, ComCtrls, Buttons, Menus, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
-  DisplayList, CleanableSpace, FullDiskAccessUI, SearchController;
+  DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
+  CollectorBarView;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -104,12 +105,9 @@ type
     FListHover: Integer;
     FChartPanel: TPanel;
     FChart: TRingsChart;
-    FCollectorPanel: TPanel;
-    FCollectorLabel: TLabel;
-    FDeleteButton: TButton;
+    { CollectorBar.swift at the bottom of the chart column (od-31j.18.6). }
+    FCollectorBar: TCollectorBarView;
     { CollectorBar deleting / done phases (od-31j.46). }
-    FCollectorDetail: TLabel;
-    FDeleteBar: TProgressBar;
     FDeleteJob: TDeleteJob;
     FDeletePoll: TTimer;
     FDoneTimer: TTimer;
@@ -181,6 +179,7 @@ type
     procedure BackClick(Sender: TObject);
     procedure RefreshClick(Sender: TObject);
     procedure DeleteClick(Sender: TObject);
+    procedure CollectorRemove(Sender: TObject; const Path: string);
     procedure DeletePollTick(Sender: TObject);
     procedure DoneTimerTick(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -563,46 +562,6 @@ begin
   FCrumbBar.BorderSpacing.Right := 12;
   FCrumbBar.Anchors := [akLeft, akTop, akRight];
 
-  FCollectorPanel := TPanel.Create(Self);
-  FCollectorPanel.Parent := FAnalysis;
-  FCollectorPanel.Align := alBottom;
-  FCollectorPanel.Height := 56;
-  FCollectorPanel.BevelOuter := bvNone;
-  FCollectorPanel.Color := CPanel2;
-
-  FCollectorLabel := TLabel.Create(Self);
-  FCollectorLabel.Parent := FCollectorPanel;
-  FCollectorLabel.Left := 20;
-  FCollectorLabel.Top := 18;
-  FCollectorLabel.Font.Color := SecondaryTextColor(CPanel2);
-  FCollectorLabel.Caption := 'Collector empty — double-click a file to stage deletion.';
-
-  FDeleteButton := TButton.Create(Self);
-  FDeleteButton.Parent := FCollectorPanel;
-  FDeleteButton.Caption := 'Delete collected';
-  FDeleteButton.Width := 140;
-  FDeleteButton.Height := 28;
-  FDeleteButton.Top := 14;
-  FDeleteButton.Anchors := [akTop, akRight];
-  FDeleteButton.OnClick := @DeleteClick;
-  FDeleteButton.Enabled := False;
-
-  FCollectorDetail := TLabel.Create(Self);
-  FCollectorDetail.Parent := FCollectorPanel;
-  FCollectorDetail.Left := 20;
-  FCollectorDetail.Top := 32;
-  FCollectorDetail.Font.Size := 10;
-  FCollectorDetail.Font.Color := SecondaryTextColor(CPanel2);
-  FCollectorDetail.Visible := False;
-
-  FDeleteBar := TProgressBar.Create(Self);
-  FDeleteBar.Parent := FCollectorPanel;
-  FDeleteBar.Left := 20;
-  FDeleteBar.Top := 48;
-  FDeleteBar.Height := 4;
-  FDeleteBar.Anchors := [akLeft, akTop, akRight];
-  FDeleteBar.Visible := False;
-
   FDeletePoll := TTimer.Create(Self);
   FDeletePoll.Enabled := False;
   FDeletePoll.Interval := 33;
@@ -613,12 +572,10 @@ begin
   FDoneTimer.Interval := 2000;
   FDoneTimer.OnTimer := @DoneTimerTick;
 
-  { Spans the window bottom, below the collector (created after it, so
-    the bottom alignment puts it lowest). }
+  { Spans the window bottom. }
   FScanBar := TScanStatusBar.Create(Self);
   FScanBar.Parent := FAnalysis;
   FScanBar.Align := alBottom;
-  FScanBar.Top := FCollectorPanel.Top + FCollectorPanel.Height;
 
   FBody := TPanel.Create(Self);
   FBody.Parent := FAnalysis;
@@ -685,6 +642,18 @@ begin
   FChart.Align := alClient;
   FChart.OnSelect := @ChartSelect;
 
+  { DiskAnalysisView chartPane: the CollectorBar under the chart,
+    .padding(.horizontal, 12).padding(.bottom, 10); its list and notice
+    float over the chart. }
+  FCollectorBar := TCollectorBarView.Create(Self);
+  FCollectorBar.Parent := FChartPanel;
+  FCollectorBar.Align := alBottom;
+  FCollectorBar.BorderSpacing.Left := 12;
+  FCollectorBar.BorderSpacing.Right := 12;
+  FCollectorBar.BorderSpacing.Bottom := 10;
+  FCollectorBar.OnDeleteClick := @DeleteClick;
+  FCollectorBar.OnRemoveItem := @CollectorRemove;
+
   { DiskAnalysisView emptyStateView: covers the list and the chart. }
   FAnalysisState := TEmptyStateView.Create(Self);
   FAnalysisState.Parent := FBody;
@@ -708,12 +677,11 @@ begin
   FListPanel.Color := CPanel;
   FVolList.Color := CPanel;
   FList.Color := CPanel;
-  FCollectorPanel.Color := CPanel2;
 
   FPickerTitle.Font.Color := CInk;
   FPickerSub.Font.Color := SecondaryTextColor(CBg);
   FCrumbBar.Color := CPanel;
-  FCollectorLabel.Font.Color := SecondaryTextColor(CPanel2);
+  FCollectorBar.Invalidate;
   FListHeader.Invalidate;
   FList.Font.Color := CInk;
   FChart.Color := CBg;
@@ -733,13 +701,11 @@ procedure TMainForm.StyleChrome;
 begin
   ApplyTheme;
   FRefreshBtn.Left := Width - FRefreshBtn.Width - 24;
-  FDeleteButton.Left := Width - FDeleteButton.Width - 24;
 end;
 
 procedure TMainForm.FormResize(Sender: TObject);
 begin
   FRefreshBtn.Left := Max(200, Width - FRefreshBtn.Width - 24);
-  FDeleteButton.Left := Max(200, Width - FDeleteButton.Width - 24);
   FVolList.Width := Min(560, Max(420, Width - 96));
   FVolList.Height := Max(200, Height - 260);
   FFolderBtn.Top := FVolList.Top + FVolList.Height + 12;
@@ -1265,6 +1231,9 @@ procedure TMainForm.ScanFinished;
 var
   Thread: TScanThread;
   ShowPath: string;
+  StageNames: TStringList;
+  Staged: TNodeID;
+  I: Integer;
 begin
   Thread := FScanThread;
   FScanThread := nil;
@@ -1302,6 +1271,27 @@ begin
     else if FTree.NodeCount <= 1 then
       ShowAnalysisState('folder', 'Nothing to Show',
         'This folder is empty, or nothing in it was large enough to scan.', [], []);
+    { Automation: OPENDISK_GUI_STAGE=<names> stages those children of the
+      root; OPENDISK_GUI_COLLECTOR_LIST=1 keeps the staged list open. }
+    if GetEnvironmentVariable('OPENDISK_GUI_STAGE') <> '' then
+    begin
+      StageNames := TStringList.Create;
+      try
+        StageNames.CommaText := GetEnvironmentVariable('OPENDISK_GUI_STAGE');
+        for I := 0 to StageNames.Count - 1 do
+        begin
+          Staged := FTree.ChildNamed(RootID, StageNames[I]);
+          if Staged <> NoNode then
+            FCollector.Add(FTree.PathOf(Staged), FTree.NameOf(Staged),
+              FTree.SizeOf(Staged), FTree.IsDirectory(Staged));
+        end;
+      finally
+        StageNames.Free;
+      end;
+      RefreshCollector;
+      RefreshList;
+    end;
+    FCollectorBar.SetListVisible(GetEnvironmentVariable('OPENDISK_GUI_COLLECTOR_LIST') = '1');
     { Automation: OPENDISK_GUI_SEARCH=<query> types into the search field. }
     if GetEnvironmentVariable('OPENDISK_GUI_SEARCH') <> '' then
       FSearchEdit.Text := GetEnvironmentVariable('OPENDISK_GUI_SEARCH');
@@ -1802,32 +1792,31 @@ begin
 end;
 
 procedure TMainForm.RefreshCollector;
+var
+  Items: TCollectorItems;
+  I: Integer;
+  F: TCollectedFile;
 begin
-  { Deleting and done phases own the bar until they end. }
-  if (FDeleteJob <> nil) or FDoneTimer.Enabled then
-    Exit;
-  FCollectorDetail.Visible := False;
-  FDeleteBar.Visible := False;
-  FCollectorLabel.Font.Style := [];
-  if FCollector.Count = 0 then
+  SetLength(Items, FCollector.Count);
+  for I := 0 to FCollector.Count - 1 do
   begin
-    FCollectorLabel.Caption :=
-      'Collector empty — double-click a file to stage deletion.';
-    FDeleteButton.Enabled := False;
-  end
-  else if FCollector.BlockedNotice <> '' then
-  begin
-    FCollectorLabel.Caption := Format('%s collected · %d item(s) · %s',
-      [FormatFileSize(FCollector.TotalBytes), FCollector.Count,
-       FCollector.BlockedNotice]);
-    FDeleteButton.Enabled := True;
-  end
-  else
-  begin
-    FCollectorLabel.Caption := Format('%s collected · %d item(s)',
-      [FormatFileSize(FCollector.TotalBytes), FCollector.Count]);
-    FDeleteButton.Enabled := True;
+    F := TCollectedFile(FCollector.Items[I]);
+    Items[I].Name := F.Name;
+    Items[I].Path := F.Path;
+    Items[I].Size := F.Size;
+    Items[I].IsDirectory := F.IsDirectory;
   end;
+  FCollectorBar.SetItems(Items);
+  { Deleting and done phases own the footer until they end. }
+  if (FDeleteJob = nil) and not FDoneTimer.Enabled then
+    FCollectorBar.SetPhase(cbIdle);
+end;
+
+procedure TMainForm.CollectorRemove(Sender: TObject; const Path: string);
+begin
+  FCollector.Remove(Path);
+  RefreshCollector;
+  RefreshList;
 end;
 
 { FolderRowView.swift: name (medium for folders) over an item count, a 46x4
@@ -2138,7 +2127,9 @@ begin
   end
   else
   begin
-    FCollector.Add(ChildPath, FTree.NameOf(Child), FTree.SizeOf(Child), False);
+    if not FCollector.Add(ChildPath, FTree.NameOf(Child), FTree.SizeOf(Child), False) and
+      (FCollector.BlockedNotice <> '') then
+      FCollectorBar.ShowNotice(FCollector.BlockedNotice);
     RefreshCollector;
     RefreshList;
   end;
@@ -2221,25 +2212,26 @@ begin
 end;
 
 procedure TMainForm.DeleteClick(Sender: TObject);
+var
+  Title: string;
 begin
   if (FCollector.Count = 0) or (FDeleteJob <> nil) then
     Exit;
-  if MessageDlg(Format('Permanently delete %d item(s) (%s)? This skips Trash.',
-    [FCollector.Count, FormatFileSize(FCollector.TotalBytes)]),
-    mtWarning, [mbYes, mbNo], 0) <> mrYes then
+  { CollectorBar confirmationDialog. }
+  if FCollector.Count = 1 then
+    Title := 'Delete 1 item?'
+  else
+    Title := Format('Delete %d items?', [FCollector.Count]);
+  if QuestionDlg(Title,
+    'This permanently deletes the collected items and can’t be undone.',
+    mtWarning, [mrYes, 'Delete ' + FormatFileSize(FCollector.TotalBytes),
+    mrCancel, 'Cancel', 'IsDefault', 'IsCancel'], 0) <> mrYes then
     Exit;
-  { CollectorBar performDeletion: delete in the background, show progress. }
+  { performDeletion: delete in the background, show progress. }
   FDoneTimer.Enabled := False;
-  FDeleteButton.Enabled := False;
   FDeleteJob := FCollector.StartDelete;
-  FCollectorLabel.Font.Style := [fsBold];
-  FCollectorLabel.Caption := 'Deleting…';
-  FCollectorDetail.Caption := '';
-  FCollectorDetail.Visible := True;
-  FDeleteBar.Width := FDeleteButton.Left - FDeleteBar.Left - 24;
-  FDeleteBar.Max := Max(1, FCollector.Count);
-  FDeleteBar.Position := 0;
-  FDeleteBar.Visible := True;
+  FCollectorBar.SetPhase(cbDeleting);
+  FCollectorBar.SetDeletionProgress('', 0, 0, FCollector.Count);
   FDeletePoll.Enabled := True;
 end;
 
@@ -2247,7 +2239,6 @@ procedure TMainForm.DeletePollTick(Sender: TObject);
 var
   P: TDeletionProgress;
   Freed: Int64;
-  Failed: Integer;
 begin
   if FDeleteJob = nil then
   begin
@@ -2255,29 +2246,17 @@ begin
     Exit;
   end;
   P := FDeleteJob.Progress;
-  if P.CurrentName <> '' then
-    FCollectorLabel.Caption := 'Deleting ' + P.CurrentName + '…'
-  else
-    FCollectorLabel.Caption := 'Deleting…';
-  FCollectorDetail.Caption := Format('Freed %s · %d of %d',
-    [FormatFileSize(P.FreedBytes), P.Completed, P.Total]);
-  FDeleteBar.Max := Max(1, P.Total);
-  FDeleteBar.Position := Min(P.Completed, P.Total);
+  FCollectorBar.SetDeletionProgress(P.CurrentName, P.FreedBytes, P.Completed, P.Total);
   if not FDeleteJob.Finished then
     Exit;
   FDeletePoll.Enabled := False;
   Freed := FCollector.FinishDelete(FDeleteJob);
   FDeleteJob := nil;
-  Failed := FCollector.Failures.Count;
-  { Done phase (CollectorBar doneView) for 2 s; the rescan starts now. }
-  FDeleteBar.Visible := False;
-  FCollectorLabel.Caption := 'Freed ' + FormatFileSize(Freed);
-  if Failed > 0 then
-    FCollectorDetail.Caption := Format('%d couldn''t be removed', [Failed])
-  else
-    FCollectorDetail.Caption := '';
-  FCollectorDetail.Visible := Failed > 0;
+  { Done phase for 2 s; onDeleted rescans the root right away. }
+  FCollectorBar.SetPhase(cbDone);
+  FCollectorBar.SetDoneResult(Freed, FCollector.Failures.Count);
   FDoneTimer.Enabled := True;
+  RefreshCollector;
   StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
 end;
 
