@@ -40,7 +40,34 @@ var
   I, Depth1: Integer;
   SweepSum, T: Double;
   HasTiny: Boolean;
+{ DiskAnalyzer.swift cleanableChartRoot. }
+procedure TestSyntheticRoot;
+var
+  Leaves: TChartLeaves;
+  Root: TChartItem;
 begin
+  SetLength(Leaves, 2);
+  Leaves[0].Name := 'Big'; Leaves[0].Path := '/c/big'; Leaves[0].Size := 300; Leaves[0].IsDirectory := True;
+  Leaves[1].Name := 'Small'; Leaves[1].Path := '/c/small'; Leaves[1].Size := 100; Leaves[1].IsDirectory := True;
+  Root := TChartItem.BuildSynthetic('Purgeable Space', '::Purgeable Space', Leaves);
+  try
+    Expect((Root <> nil) and (Root.Kind = ckSynthetic) and (Root.Size = 400) and
+      (Root.Path = '::Purgeable Space'), 'synthetic root carries the total');
+    Expect((Root.Children.Count = 2) and
+      (Abs(TChartItem(Root.Children[0]).RelSize - 75) < 1e-9) and
+      (Abs(TChartItem(Root.Children[1]).RelStart - 75) < 1e-9) and
+      (TChartItem(Root.Children[1]).Depth = 1) and
+      (TChartItem(Root.Children[0]).Children.Count = 0),
+      'leaves share the ring in order, without children');
+  finally
+    Root.Free;
+  end;
+  SetLength(Leaves, 0);
+  Expect(TChartItem.BuildSynthetic('x', '::x', Leaves) = nil, 'no total, no chart');
+end;
+
+begin
+  TestSyntheticRoot;
   Fail := False;
   Tree := TFileTree.Create('/root');
   Tree.AddNode('a', RootID, 6000, False);

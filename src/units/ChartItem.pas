@@ -12,6 +12,15 @@ uses
 type
   TChartKind = (ckFile, ckDirectory, ckSynthetic);
 
+  { One flat child of a synthetic chart root. }
+  TChartLeaf = record
+    Name: string;
+    Path: string;
+    Size: Int64;
+    IsDirectory: Boolean;
+  end;
+  TChartLeaves = array of TChartLeaf;
+
   TChartItem = class
   private
     FName: string;
@@ -29,6 +38,11 @@ type
     destructor Destroy; override;
     class function Build(Tree: TFileTree; Node: TNodeID;
       const AName, APath: string): TChartItem;
+    { DiskAnalyzer.swift cleanableChartRoot: a synthetic root of the leaves'
+      total with one ring of childless leaves in the given order; nil when
+      the total is not positive. }
+    class function BuildSynthetic(const AName, APath: string;
+      const Leaves: TChartLeaves): TChartItem;
     property Name: string read FName;
     property Path: string read FPath;
     property Size: Int64 read FSize;
@@ -71,6 +85,49 @@ begin
     Result := Path
   else
     Result := Path + DirectorySeparator;
+end;
+
+class function TChartItem.BuildSynthetic(const AName, APath: string;
+  const Leaves: TChartLeaves): TChartItem;
+var
+  Total: Int64;
+  I: Integer;
+  Cursor, Share: Double;
+  Child: TChartItem;
+begin
+  Total := 0;
+  for I := 0 to High(Leaves) do
+    Inc(Total, Leaves[I].Size);
+  if Total <= 0 then
+    Exit(nil);
+  Result := TChartItem.Create;
+  Result.FName := AName;
+  Result.FPath := APath;
+  Result.FSize := Total;
+  Result.FDepth := 0;
+  Result.FRelStart := 0;
+  Result.FRelSize := 100;
+  Result.FFractionOfRoot := 1;
+  Result.FKind := ckSynthetic;
+  Cursor := 0;
+  for I := 0 to High(Leaves) do
+  begin
+    Share := Leaves[I].Size / Total * 100;
+    Child := TChartItem.Create;
+    Child.FName := Leaves[I].Name;
+    Child.FPath := Leaves[I].Path;
+    Child.FSize := Leaves[I].Size;
+    Child.FDepth := 1;
+    Child.FRelStart := Cursor;
+    Child.FRelSize := Share;
+    Child.FFractionOfRoot := Share / 100;
+    if Leaves[I].IsDirectory then
+      Child.FKind := ckDirectory
+    else
+      Child.FKind := ckFile;
+    Result.FChildren.Add(Child);
+    Cursor := Cursor + Share;
+  end;
 end;
 
 class function TChartItem.Build(Tree: TFileTree; Node: TNodeID;

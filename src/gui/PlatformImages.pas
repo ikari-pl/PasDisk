@@ -28,6 +28,8 @@ procedure DrawFileIcon(ACanvas: TCanvas; const Bounds: TRect; const Path: string
 { Forget cached icons (call when the volume list is rebuilt, so unmounted
   volumes and failed lookups do not accumulate). }
 procedure ClearVolumeIconCache;
+{ The generic folder icon (FileIcon.folder), for synthetic folders. }
+procedure DrawFolderIcon(ACanvas: TCanvas; const Bounds: TRect);
 procedure ClearFileIconCache;
 
 { SF Symbol Name (e.g. 'lock.slash') as a Px x Px bitmap in Color, the
@@ -377,6 +379,18 @@ end;
 procedure ClearVolumeIconCache;
 begin
   IconCache.Clear;
+end;
+
+procedure DrawFolderIcon(ACanvas: TCanvas; const Bounds: TRect);
+begin
+  {$IFDEF DARWIN}
+  if FolderIcon = nil then
+    FolderIcon := LoadTypeIcon('public.folder', 2 * (Bounds.Right - Bounds.Left));
+  {$ENDIF}
+  if FolderIcon = nil then
+    DrawPlaceholder(ACanvas, Bounds)
+  else
+    ACanvas.StretchDraw(Bounds, FolderIcon);
 end;
 
 procedure ClearFileIconCache;

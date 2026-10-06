@@ -14,7 +14,7 @@ uses
   StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
-  DisplayList;
+  DisplayList, CleanableSpace;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -106,6 +106,12 @@ type
     { DiskAnalysisView ScanStatusBar and the scan it describes. }
     FScanBar: TScanStatusBar;
     FScanStart: TDateTime;
+    { The 'Purgeable Space' row at the scan root (od-31j.20). }
+    FPurgeableTotal: Int64;
+    FPurgeableCount: Integer;
+    { Entries listed in the Purgeable Space view, in list order: rows show
+      the catalogue name and no item count (displayCleanableSpace). }
+    FPurgeableEntries: TCleanableEntries;
      FScanThread: TScanThread;
      FPoll: TTimer;
     FBreadcrumbs: TStringList;
@@ -183,6 +189,10 @@ const
   CAccent   = clHighlight;
   CBarTrack = clBtnShadow;
   CBarFill  = clHighlight;
+
+const
+  { List object of the synthetic 'Purgeable Space' row (never a node). }
+  PurgeableRowID = TNodeID(-2);
 
 threadvar
   { The scan thread running on this OS thread: TScanProgress and
@@ -1059,9 +1069,14 @@ begin
     if ShowPath <> '' then
     begin
       { Relative values are inside the scan; absolute ones are used as is. }
-      if ShowPath[1] <> PathDelim then
-        ShowPath := IncludeTrailingPathDelimiter(FRootPath) + ShowPath;
-      CrumbNavigate(ResolvePath(ShowPath));
+      if Copy(ShowPath, 1, 2) = '::' then
+        ShowNode(ShowPath)
+      else
+      begin
+        if ShowPath[1] <> PathDelim then
+          ShowPath := IncludeTrailingPathDelimiter(FRootPath) + ShowPath;
+        CrumbNavigate(ResolvePath(ShowPath));
+      end;
     end;
   finally
     Thread.Free;
@@ -1081,9 +1096,17 @@ begin
     Exit;
   FreeAndNil(FTree);
   FTree := Partial;
-  if ResolveNode(FTree, FRootPath, FCurrentPath) = NoNode then
+  if (FCurrentPath <> HiddenSpaceSentinelPath) and
+    (ResolveNode(FTree, FRootPath, FCurrentPath) = NoNode) then
     FCurrentPath := FRootPath;
   ShowNode(FCurrentPath);
+  { A partial tree may not hold the cache folders yet. }
+  if (FCurrentPath = HiddenSpaceSentinelPath) and
+    (Length(CleanableCacheEntriesOf(FTree, FRootPath)) = 0) then
+  begin
+    FCurrentPath := FRootPath;
+    ShowNode(FCurrentPath);
+  end;
 end;
 
 procedure TMainForm.ShowNode(const APath: string);
@@ -1091,9 +1114,39 @@ var
   Node: TNodeID;
   NodeName: string;
   Chart: TChartItem;
+  Entries: TCleanableEntries;
+  Leaves: TChartLeaves;
+  I: Integer;
 begin
   if FTree = nil then
     Exit;
+  if APath = HiddenSpaceSentinelPath then
+  begin
+    { DiskAnalyzer.navigateToPath(sentinel) / displayCleanableSpace. }
+    Entries := SortedForDisplay(CleanableCacheEntriesOf(FTree, FRootPath));
+    if Length(Entries) = 0 then
+      Exit;
+    FCurrentPath := APath;
+    SetLength(Leaves, Length(Entries));
+    for I := 0 to High(Entries) do
+    begin
+      Leaves[I].Name := Entries[I].Name;
+      Leaves[I].Path := Entries[I].Path;
+      Leaves[I].Size := Entries[I].Size;
+      Leaves[I].IsDirectory := True;
+    end;
+    FChart.TakeRoot(TChartItem.BuildSynthetic(HiddenSpaceFolderName,
+      HiddenSpaceSentinelPath, Leaves));
+    FCrumbBar.SetPath(FRootPath, FRootName, APath);
+    { windowTitle drops the '::'. }
+    Caption := HiddenSpaceFolderName;
+    FListHeader.Caption := 'Largest in ' + HiddenSpaceFolderName + '  ·  ' +
+      FormatFileSize(CleanableTotal(Entries));
+    RefreshList;
+    FBackBtn.Enabled := FBreadcrumbs.Count > 0;
+    FScanBar.SetTotals(CleanableTotal(Entries), FList.Items.Count);
+    Exit;
+  end;
   Node := ResolveNode(FTree, FRootPath, APath);
   if Node = NoNode then
     Exit;
@@ -1144,36 +1197,81 @@ end;
 
 procedure TMainForm.RefreshList;
 var
-  Node: TNodeID;
+  Node, Child: TNodeID;
   Listed: TNodeIDArray;
-  I: Integer;
-  Child: TNodeID;
-  Line: string;
+  Entries: TCleanableEntries;
+  I, InsertAt: Integer;
+  AllCollected: Boolean;
+
+  procedure AddRow(ID: TNodeID; const Name: string; Size: Int64);
+  begin
+    { The name doubles as the accessible text of the owner-drawn row. }
+    FList.Items.AddObject(Name, TObject(PtrInt(ID)));
+    if Size > FListMaxSize then
+      FListMaxSize := Size;
+  end;
+
 begin
   FList.Items.BeginUpdate;
   try
     FList.Clear;
+    FListMaxSize := 0;
+    FListHover := -1;
+    FPurgeableTotal := 0;
+    FPurgeableCount := 0;
+    FPurgeableEntries := nil;
     if FTree = nil then
       Exit;
+    if FCurrentPath = HiddenSpaceSentinelPath then
+    begin
+      { displayCleanableSpace: the cache folders, largest first. }
+      Entries := SortedForDisplay(CleanableCacheEntriesOf(FTree, FRootPath));
+      for I := 0 to High(Entries) do
+      begin
+        Child := FTree.NodeIDForPath(Entries[I].Path, FRootPath);
+        if (Child <> NoNode) and not FCollector.Contains(Entries[I].Path) then
+        begin
+          AddRow(Child, Entries[I].Name, Entries[I].Size);
+          SetLength(FPurgeableEntries, Length(FPurgeableEntries) + 1);
+          FPurgeableEntries[High(FPurgeableEntries)] := Entries[I];
+        end;
+      end;
+      Exit;
+    end;
     Node := ResolveNode(FTree, FRootPath, FCurrentPath);
     if Node = NoNode then
       Exit;
-    FListMaxSize := 0;
-    FListHover := -1;
     { DiskAnalyzer.swift folderItems: top 100 below the scan root, only
       items above 1 KiB once the scan is complete. }
     Listed := VisibleChildren(FTree, Node, Node = RootID, FScanThread <> nil);
+    for I := 0 to High(Listed) do
     begin
-      for I := 0 to High(Listed) do
+      Child := Listed[I];
+      if FCollector.Contains(FTree.PathOf(Child)) then
+        Continue;
+      AddRow(Child, FTree.NameOf(Child), FTree.SizeOf(Child));
+    end;
+    { display(node:) adds the summary row at the scan root; visibleItems
+      hides it once every entry is collected; it sorts by size. }
+    if Node = RootID then
+    begin
+      Entries := CleanableCacheEntriesOf(FTree, FRootPath);
+      AllCollected := True;
+      for I := 0 to High(Entries) do
+        if not FCollector.Contains(Entries[I].Path) then
+          AllCollected := False;
+      FPurgeableTotal := CleanableTotal(Entries);
+      FPurgeableCount := Length(Entries);
+      if (FPurgeableTotal > 0) and not AllCollected then
       begin
-        Child := Listed[I];
-        if FCollector.Contains(FTree.PathOf(Child)) then
-          Continue;
-        { The name doubles as the accessible text of the owner-drawn row. }
-        Line := FTree.NameOf(Child);
-        FList.Items.AddObject(Line, TObject(PtrUInt(Child)));
-        if FTree.SizeOf(Child) > FListMaxSize then
-          FListMaxSize := FTree.SizeOf(Child);
+        InsertAt := 0;
+        while (InsertAt < FList.Items.Count) and
+          (FTree.SizeOf(TNodeID(PtrUInt(FList.Items.Objects[InsertAt]))) >= FPurgeableTotal) do
+          Inc(InsertAt);
+        FList.Items.InsertObject(InsertAt, HiddenSpaceFolderName,
+          TObject(PtrInt(PurgeableRowID)));
+        if FPurgeableTotal > FListMaxSize then
+          FListMaxSize := FPurgeableTotal;
       end;
     end;
   finally
@@ -1235,7 +1333,10 @@ var
   Row, Cap, Fill: TRect;
   RowName, Detail, SizeText: string;
   Keep: Integer;
-  NameTop, Right, SizeLeft, CapLeft, MidY, W, TextLeft: Integer;
+  NameTop, Right, SizeLeft, CapLeft, MidY, W, TextLeft, Count: Integer;
+  RowSize: Int64;
+  FullName: string;
+  IconRect: TRect;
   Frac: Double;
 begin
   LB := Control as TListBox;
@@ -1243,7 +1344,32 @@ begin
   if (FTree = nil) or (Index < 0) or (Index >= LB.Items.Count) then
     Exit;
   Node := TNodeID(PtrUInt(LB.Items.Objects[Index]));
-  IsDir := FTree.IsDirectory(Node);
+  if Node = PurgeableRowID then
+  begin
+    { DiskAnalyzer.display(node:): the cache summary row. }
+    IsDir := True;
+    RowSize := FPurgeableTotal;
+    FullName := HiddenSpaceFolderName;
+    Count := FPurgeableCount;
+  end
+  else if (FCurrentPath = HiddenSpaceSentinelPath) and (Index <= High(FPurgeableEntries)) then
+  begin
+    { displayCleanableSpace: catalogue name, no item count. }
+    IsDir := True;
+    RowSize := FPurgeableEntries[Index].Size;
+    FullName := FPurgeableEntries[Index].Name;
+    Count := 0;
+  end
+  else
+  begin
+    IsDir := FTree.IsDirectory(Node);
+    RowSize := FTree.SizeOf(Node);
+    FullName := FTree.NameOf(Node);
+    if IsDir then
+      Count := FTree.ChildCount(Node)
+    else
+      Count := 0;
+  end;
   Selected := odSelected in State;
 
   Bg := ColorToRGB(CPanel);
@@ -1303,7 +1429,7 @@ begin
   Right := Right - ChevronW - Gap;
 
   { size, right-aligned in its fixed column }
-  SizeText := FormatFileSize(FTree.SizeOf(Node));
+  SizeText := FormatFileSize(RowSize);
   { System font: CLAUDE.md forbids a monospaced font in the file list, and
     LCL cannot request monospaced digits; the fixed right-aligned column
     keeps sizes from shifting. }
@@ -1318,7 +1444,7 @@ begin
   { size capsule against the largest sibling }
   if FListMaxSize > 0 then
   begin
-    Frac := FTree.SizeOf(Node) / FListMaxSize;
+    Frac := RowSize / FListMaxSize;
     if Frac > 1 then
       Frac := 1;
     CapLeft := Right - CapsuleW;
@@ -1338,9 +1464,13 @@ begin
   end;
 
   { icon }
-  DrawFileIcon(C, Rect(Row.Left + PadX, MidY - IconSize div 2,
-    Row.Left + PadX + IconSize, MidY - IconSize div 2 + IconSize),
-    FTree.PathOf(Node), IsDir);
+  IconRect := Rect(Row.Left + PadX, MidY - IconSize div 2,
+    Row.Left + PadX + IconSize, MidY - IconSize div 2 + IconSize);
+  { FolderRowView: a synthetic folder gets the generic folder icon. }
+  if Node = PurgeableRowID then
+    DrawFolderIcon(C, IconRect)
+  else
+    DrawFileIcon(C, IconRect, FTree.PathOf(Node), IsDir);
   TextLeft := Row.Left + PadX + IconSize + IconGap;
 
   { name and item count }
@@ -1352,18 +1482,18 @@ begin
   else
     C.Font.Style := [];
   C.Font.Color := Ink;
-  RowName := FTree.NameOf(Node);
+  RowName := FullName;
   { Too long for the name column: truncate in the middle (CLAUDE.md:
     preserve the start and the extension) rather than clip. }
   Keep := CodePointCount(RowName);
   while (C.TextWidth(RowName) > Right - TextLeft) and (Keep > 6) do
   begin
     Dec(Keep);
-    RowName := TruncateMiddle(FTree.NameOf(Node), Keep);
+    RowName := TruncateMiddle(FullName, Keep);
   end;
   Detail := '';
-  if IsDir and (FTree.ChildCount(Node) > 0) then
-    Detail := Format('%d items', [FTree.ChildCount(Node)]);
+  if IsDir and (Count > 0) then
+    Detail := Format('%d items', [Count]);
   { Fixed metrics: a 13 pt name line, 2 pt spacing, an 11 pt caption
     (FolderRowView VStack spacing 2); canvas TextHeight is not reliable
     before the font is realized. }
@@ -1435,6 +1565,12 @@ begin
   if (FTree = nil) or (FList.ItemIndex < 0) then
     Exit;
   Child := TNodeID(PtrUInt(FList.Items.Objects[FList.ItemIndex]));
+  if Child = PurgeableRowID then
+  begin
+    FBreadcrumbs.Add(FCurrentPath);
+    ShowNode(HiddenSpaceSentinelPath);
+    Exit;
+  end;
   ChildPath := FTree.PathOf(Child);
   if FTree.IsDirectory(Child) then
   begin
@@ -1516,10 +1652,12 @@ var
 begin
   if FCurrentPath = '' then
     Exit;
-  if FCurrentPath = FRootPath then
-    ScanName := FRootName
-  else
-    ScanName := ExtractFileName(ExcludeTrailingPathDelimiter(FCurrentPath));
+  if (FCurrentPath = FRootPath) or (Copy(FCurrentPath, 1, 2) = '::') then
+  begin
+    StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+    Exit;
+  end;
+  ScanName := ExtractFileName(ExcludeTrailingPathDelimiter(FCurrentPath));
   StartScan(FCurrentPath, ScanName, FRootTotal, FRootFree);
 end;
 

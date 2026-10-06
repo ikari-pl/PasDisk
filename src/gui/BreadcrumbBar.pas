@@ -103,6 +103,18 @@ begin
     (ExcludeTrailingPathDelimiter(FCurrentPath) = FRootPath);
   if FSegments[0].IsLast then
     Exit;
+  { BreadcrumbBar.swift: a synthetic '::Name' view is one crumb after the
+    root. }
+  if Copy(FCurrentPath, 1, 2) = '::' then
+  begin
+    SetLength(FSegments, 2);
+    FSegments[1].Name := Copy(FCurrentPath, 3, MaxInt);
+    FSegments[1].FullName := FSegments[1].Name;
+    FSegments[1].Path := FCurrentPath;
+    FSegments[1].IsEllipsis := False;
+    FSegments[1].IsLast := True;
+    Exit;
+  end;
   Rel := Copy(FCurrentPath, Length(IncludeTrailingPathDelimiter(FRootPath)) + 1, MaxInt);
   if Copy(FCurrentPath, 1, Length(IncludeTrailingPathDelimiter(FRootPath))) <>
      IncludeTrailingPathDelimiter(FRootPath) then
