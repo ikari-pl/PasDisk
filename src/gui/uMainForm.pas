@@ -15,7 +15,7 @@ uses
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
-  CollectorBarView;
+  CollectorBarView, PlatformAlert;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -191,6 +191,7 @@ type
     procedure MenuShowInFinderClick(Sender: TObject);
     procedure MenuCopyPathClick(Sender: TObject);
     procedure MenuHookTick(Sender: TObject);
+    procedure ConfirmHookTick(Sender: TObject);
     procedure DeletePollTick(Sender: TObject);
     procedure DoneTimerTick(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -1305,6 +1306,16 @@ begin
       RefreshList;
     end;
     FCollectorBar.SetListVisible(GetEnvironmentVariable('OPENDISK_GUI_COLLECTOR_LIST') = '1');
+    { Automation: OPENDISK_GUI_CONFIRM_DELETE=1 shows the delete
+      confirmation for the staged items (nothing is deleted unless the
+      Delete button is clicked). }
+    if GetEnvironmentVariable('OPENDISK_GUI_CONFIRM_DELETE') = '1' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 800;
+        OnTimer := @ConfirmHookTick;
+        Enabled := True;
+      end;
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
     if GetEnvironmentVariable('OPENDISK_GUI_MENU') <> '' then
       with TTimer.Create(Self) do
@@ -1914,6 +1925,12 @@ begin
     FRowMenu.PopUp(X, Y);
 end;
 
+procedure TMainForm.ConfirmHookTick(Sender: TObject);
+begin
+  (Sender as TTimer).Enabled := False;
+  DeleteClick(nil);
+end;
+
 procedure TMainForm.MenuHookTick(Sender: TObject);
 var
   Row: Integer;
@@ -2379,10 +2396,9 @@ begin
     Title := 'Delete 1 item?'
   else
     Title := Format('Delete %d items?', [FCollector.Count]);
-  if QuestionDlg(Title,
+  if not ConfirmDestructive(Title,
     'This permanently deletes the collected items and can’t be undone.',
-    mtWarning, [mrYes, 'Delete ' + FormatFileSize(FCollector.TotalBytes),
-    mrCancel, 'Cancel', 'IsDefault', 'IsCancel'], 0) <> mrYes then
+    'Delete ' + FormatFileSize(FCollector.TotalBytes)) then
     Exit;
   { performDeletion: delete in the background, show progress. }
   FDoneTimer.Enabled := False;

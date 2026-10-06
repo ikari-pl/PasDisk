@@ -17,6 +17,11 @@ interface
 function ShowSuppressibleAlert(const Title, Message: string;
   const Buttons: array of string; out Suppressed: Boolean): Integer;
 
+{ A confirmation like SwiftUI's confirmationDialog with a destructive
+  button: Title / Message, ConfirmTitle (red, destructive) and Cancel
+  (the default for Return/Escape safety). True when confirmed. }
+function ConfirmDestructive(const Title, Message, ConfirmTitle: string): Boolean;
+
 implementation
 
 uses
@@ -33,6 +38,7 @@ type
   TMsgObjArg = function(Self, Op, Arg: Pointer): Pointer; cdecl;
   TMsgVoidBool = procedure(Self, Op: Pointer; Value: ByteBool); cdecl;
   TMsgInt = function(Self, Op: Pointer): PtrInt; cdecl;
+  TMsgObjInt = function(Self, Op: Pointer; Value: PtrInt): Pointer; cdecl;
 
 function Sel(const Name: string): Pointer;
 begin
@@ -80,7 +86,54 @@ begin
     TMsgObj(@objc_msgSend)(Alert, Sel('release'));
   end;
 end;
+function ConfirmDestructive(const Title, Message, ConfirmTitle: string): Boolean;
+const
+  NSAlertFirstButtonReturn = 1000;
+  NSAlertStyleWarning = 0;
+var
+  Alert, Str, Button: Pointer;
+
+  procedure SendString(Target: Pointer; const Selector, Value: string);
+  begin
+    Str := CFStringCreateWithCString(nil, PChar(Value), kCFStringEncodingUTF8);
+    try
+      TMsgObjArg(@objc_msgSend)(Target, Sel(Selector), Str);
+    finally
+      CFRelease(Str);
+    end;
+  end;
+
+begin
+  Result := False;
+  Alert := TMsgObj(@objc_msgSend)(objc_getClass('NSAlert'), Sel('alloc'));
+  Alert := TMsgObj(@objc_msgSend)(Alert, Sel('init'));
+  if Alert = nil then
+    Exit;
+  try
+    SendString(Alert, 'setMessageText:', Title);
+    SendString(Alert, 'setInformativeText:', Message);
+    TMsgObjInt(@objc_msgSend)(Alert, Sel('setAlertStyle:'), NSAlertStyleWarning);
+    SendString(Alert, 'addButtonWithTitle:', ConfirmTitle);
+    Button := TMsgObj(@objc_msgSend)(Alert, Sel('buttons'));
+    Button := TMsgObjInt(@objc_msgSend)(Button, Sel('objectAtIndex:'), 0);
+    { Red, and not triggered by Return. }
+    TMsgVoidBool(@objc_msgSend)(Button, Sel('setHasDestructiveAction:'), True);
+    Str := CFStringCreateWithCString(nil, '', kCFStringEncodingUTF8);
+    TMsgObjArg(@objc_msgSend)(Button, Sel('setKeyEquivalent:'), Str);
+    CFRelease(Str);
+    SendString(Alert, 'addButtonWithTitle:', 'Cancel');
+    Result := TMsgInt(@objc_msgSend)(Alert, Sel('runModal')) = NSAlertFirstButtonReturn;
+  finally
+    TMsgObj(@objc_msgSend)(Alert, Sel('release'));
+  end;
+end;
 {$ELSE}
+function ConfirmDestructive(const Title, Message, ConfirmTitle: string): Boolean;
+begin
+  Result := QuestionDlg(Title, Message, mtWarning,
+    [mrYes, ConfirmTitle, mrCancel, 'Cancel', 'IsDefault', 'IsCancel'], 0) = mrYes;
+end;
+
 function ShowSuppressibleAlert(const Title, Message: string;
   const Buttons: array of string; out Suppressed: Boolean): Integer;
 begin
