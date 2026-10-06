@@ -13,7 +13,7 @@ uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformAppearance,
-  GuiColors, BreadcrumbBar;
+  GuiColors, BreadcrumbBar, TextTrim;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -889,6 +889,7 @@ var
   Bg, Ink, Secondary, Tertiary: TColor;
   Row, Cap, Fill: TRect;
   RowName, Detail, SizeText: string;
+  Keep: Integer;
   NameTop, Right, SizeLeft, CapLeft, MidY, W: Integer;
   Frac: Double;
 begin
@@ -1001,6 +1002,14 @@ begin
     C.Font.Style := [];
   C.Font.Color := Ink;
   RowName := FTree.NameOf(Node);
+  { Too long for the name column: truncate in the middle (CLAUDE.md:
+    preserve the start and the extension) rather than clip. }
+  Keep := CodePointCount(RowName);
+  while (C.TextWidth(RowName) > Right - (Row.Left + PadX)) and (Keep > 6) do
+  begin
+    Dec(Keep);
+    RowName := TruncateMiddle(FTree.NameOf(Node), Keep);
+  end;
   Detail := '';
   if IsDir and (FTree.ChildCount(Node) > 0) then
     Detail := Format('%d items', [FTree.ChildCount(Node)]);
