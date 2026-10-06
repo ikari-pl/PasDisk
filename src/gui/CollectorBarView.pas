@@ -49,8 +49,14 @@ type
     FHover: Integer;
     FPressRow, FPressX, FPressY: Integer;
     FDragged: Boolean;
+    { ScrollView offset: the list scrolls once its rows outgrow the panel. }
+    FScroll: Integer;
+    function MaxScroll: Integer;
+    function RowAt(Y: Integer): Integer;
   protected
     procedure Paint; override;
+    function DoMouseWheel(Shift: TShiftState; WheelDelta: Integer;
+      MousePos: TPoint): Boolean; override;
     procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
     procedure MouseLeave; override;
@@ -202,11 +208,19 @@ begin
   { listPanel: CollectedRow per item — remove x, 18 pt icon, name, size. }
   FBar.DrawPanel(C, Panel, clNone, False, clNone, False);
   Secondary := SecondaryTextColor(FBar.PanelColor);
-  Y := Panel.Top + 8;
+  FScroll := Max(0, Min(FScroll, MaxScroll));
+  C.ClipRect := Rect(Panel.Left, Panel.Top + 2, Panel.Right, Panel.Bottom - 2);
+  C.Clipping := True;
+  Y := Panel.Top + 8 - FScroll;
   for I := 0 to High(FBar.FItems) do
   begin
-    if Y + RowHeight > Panel.Bottom then
+    if Y >= Panel.Bottom then
       Break;
+    if Y + RowHeight <= Panel.Top then
+    begin
+      Inc(Y, RowHeight);
+      Continue;
+    end;
     if I = FHover then
     begin
       { .hoverHighlight(cornerRadius: 6) }
@@ -240,6 +254,52 @@ begin
     C.TextOut(X, Y + (RowHeight - C.TextHeight(RowName)) div 2, RowName);
     Inc(Y, RowHeight);
   end;
+  { An overlay scroller showing the visible part of the list. }
+  if MaxScroll > 0 then
+  begin
+    W := Panel.Bottom - Panel.Top - 12;
+    Y := Max(24, W * (Panel.Bottom - Panel.Top) div (Length(FBar.FItems) * RowHeight + 16));
+    X := Panel.Top + 6 + (W - Y) * FScroll div MaxScroll;
+    C.Brush.Style := bsSolid;
+    C.Brush.Color := Blend(FBar.PanelColor, clWindowText, 0.35);
+    C.Pen.Style := psClear;
+    C.RoundRect(Panel.Right - 9, X, Panel.Right - 4, X + Y, 5, 5);
+    C.Pen.Style := psSolid;
+  end;
+  C.Clipping := False;
+end;
+
+function TCollectorOverlay.MaxScroll: Integer;
+begin
+  Result := Max(0, Length(FBar.FItems) * RowHeight + 16 - (ClientHeight - ShadowSpace));
+end;
+
+{ The row under Y, scroll included; -1 outside the rows. }
+function TCollectorOverlay.RowAt(Y: Integer): Integer;
+begin
+  Result := -1;
+  if (Y < 8) or (Y >= ClientHeight - ShadowSpace) then
+    Exit;
+  Result := (Y - 8 + FScroll) div RowHeight;
+  if Result > High(FBar.FItems) then
+    Result := -1;
+end;
+
+function TCollectorOverlay.DoMouseWheel(Shift: TShiftState; WheelDelta: Integer;
+  MousePos: TPoint): Boolean;
+var
+  NewScroll: Integer;
+begin
+  Result := True;
+  if not FIsList then
+    Exit(False);
+  NewScroll := Max(0, Min(MaxScroll, FScroll - WheelDelta * RowHeight div 120));
+  if NewScroll <> FScroll then
+  begin
+    FScroll := NewScroll;
+    FHover := RowAt(ScreenToClient(Mouse.CursorPos).Y);
+    Invalidate;
+  end;
 end;
 
 { Swift's remove button: the leading 31 pt of a row. }
@@ -254,10 +314,10 @@ begin
   inherited MouseDown(Button, Shift, X, Y);
   FPressRow := -1;
   FDragged := False;
-  if (not FIsList) or (Button <> mbLeft) or (Y < 8) or (X < RemoveZone) then
+  if (not FIsList) or (Button <> mbLeft) or (X < RemoveZone) then
     Exit;
-  I := (Y - 8) div RowHeight;
-  if I <= High(FBar.FItems) then
+  I := RowAt(Y);
+  if I >= 0 then
   begin
     FPressRow := I;
     FPressX := X;
@@ -282,9 +342,7 @@ begin
     Exit;
   end;
   FBar.ListHover(True);
-  H := (Y - 8) div RowHeight;
-  if (Y < 8) or (H > High(FBar.FItems)) then
-    H := -1;
+  H := RowAt(Y);
   if H <> FHover then
   begin
     FHover := H;
@@ -310,8 +368,8 @@ begin
   FPressRow := -1;
   if (not FIsList) or (Button <> mbLeft) or FDragged then
     Exit;
-  I := (Y - 8) div RowHeight;
-  if (Y >= 8) and (I >= 0) and (I <= High(FBar.FItems)) and (X < RemoveZone) and
+  I := RowAt(Y);
+  if (I >= 0) and (X < RemoveZone) and
     Assigned(FBar.FOnRemoveItem) then
     FBar.FOnRemoveItem(FBar, FBar.FItems[I].Path);
 end;
@@ -639,7 +697,8 @@ begin
   if WantsList then
   begin
     FCollapse.Enabled := False;
-    H := Min(600, Length(FItems) * RowHeight + 16) + ShadowSpace;
+    { listHeight = min(600, count * 30 + 16), within the room above. }
+    H := Min(Min(600, Length(FItems) * RowHeight + 16), Bottom - ShadowSpace - 8) + ShadowSpace;
     FList.SetBounds(Left, Bottom - H, Width, H);
     FList.Visible := True;
     FList.BringToFront;

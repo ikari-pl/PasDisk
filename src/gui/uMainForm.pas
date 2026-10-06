@@ -98,7 +98,6 @@ type
     FList: TListBox;
     FSortField: TListSortField;
     FSortAscending: Boolean;
-    FSelectionAnchor: Integer;
     { Largest size among the listed children (ScanResultsView.swift maxSize)
       and the row under the pointer, -1 for none. }
     FListMaxSize: Int64;
@@ -171,8 +170,7 @@ type
       ARect: TRect; State: TOwnerDrawState);
     procedure ListMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
     procedure ListMouseLeave(Sender: TObject);
-    procedure ListMouseDown(Sender: TObject; Button: TMouseButton;
-      Shift: TShiftState; X, Y: Integer);
+    procedure ListSelectionChange(Sender: TObject; User: Boolean);
     procedure ListKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure SortNameClick(Sender: TObject);
     procedure SortSizeClick(Sender: TObject);
@@ -207,6 +205,7 @@ type
     procedure CollectorDragOut(Sender: TObject; Source: TWinControl;
       const Paths: array of string);
     procedure DragOutEnded(const ScreenPt: TPoint; Accepted: Boolean);
+    function InCollectorDropBand(const ScreenPt: TPoint): Boolean;
     function ChartDropUpdate(const ScreenPt: TPoint): Boolean;
     procedure ChartDropExit;
     function ChartDrop(const ScreenPt: TPoint): Boolean;
@@ -264,6 +263,8 @@ const
 const
   { List object of the synthetic 'Purgeable Space' row (never a node). }
   PurgeableRowID = TNodeID(-2);
+  { How far above the collector bar a drag still targets it. }
+  CollectorDropBand = 64;
   { Search result rows: SearchRowBase - index into FSearchItems. }
   SearchRowBase = TNodeID(-1000);
 
@@ -634,7 +635,6 @@ begin
 
   FSortField := lsSize;
   FSortAscending := False;
-  FSelectionAnchor := -1;
 
   FList := TListBox.Create(Self);
   FList.Parent := FListPanel;
@@ -652,7 +652,7 @@ begin
   FList.Options := FList.Options - [lboDrawFocusRect];
   FList.OnMouseMove := @ListMouseMove;
   FList.OnMouseLeave := @ListMouseLeave;
-  FList.OnMouseDown := @ListMouseDown;
+  FList.OnSelectionChange := @ListSelectionChange;
   FList.OnKeyDown := @ListKeyDown;
   FList.OnDblClick := @ListDblClick;
   FList.OnContextPopup := @ListContextPopup;
@@ -766,7 +766,6 @@ begin
   FSearchTimer.Enabled := FSearchQuery <> '';
   { onChange(of: searchText): the selection is cleared. }
   FList.ClearSelection;
-  FSelectionAnchor := -1;
   RefreshList;
   FListHeader.Invalidate;
 end;
@@ -1771,39 +1770,17 @@ begin
     end;
 end;
 
-procedure TMainForm.ListMouseDown(Sender: TObject; Button: TMouseButton;
-  Shift: TShiftState; X, Y: Integer);
+{ The table selects natively (click, Shift range, Cmd toggle, and a
+  press on a selected row keeps the selection so it can be dragged); the
+  synthetic row is never part of a selection. }
+procedure TMainForm.ListSelectionChange(Sender: TObject; User: Boolean);
 var
-  Index, I, Lo, Hi: Integer;
-  Node: TNodeID;
+  I: Integer;
 begin
-  if Button <> mbLeft then Exit;
-  Index := FList.ItemAtPos(Point(X, Y), True);
-  if (Index < 0) or (Index >= FList.Items.Count) then Exit;
-  Node := TNodeID(PtrInt(FList.Items.Objects[Index]));
-  if Node = PurgeableRowID then Exit;
-  if ssShift in Shift then
-  begin
-    if (FSelectionAnchor >= 0) and (FSelectionAnchor < FList.Items.Count) then
-    begin
-      Lo := Min(FSelectionAnchor, Index);
-      Hi := Max(FSelectionAnchor, Index);
-      FList.ClearSelection;
-      for I := Lo to Hi do
-        if TNodeID(PtrInt(FList.Items.Objects[I])) <> PurgeableRowID then
-          FList.Selected[I] := True;
-    end
-    else
-      FList.Selected[Index] := True;
-  end
-  else if ssMeta in Shift then
-    FList.Selected[Index] := not FList.Selected[Index]
-  else
-  begin
-    FList.ClearSelection;
-    FList.Selected[Index] := True;
-  end;
-  FSelectionAnchor := Index;
+  for I := 0 to FList.Items.Count - 1 do
+    if FList.Selected[I] and
+      (TNodeID(PtrInt(FList.Items.Objects[I])) = PurgeableRowID) then
+      FList.Selected[I] := False;
   FList.Invalidate;
 end;
 
@@ -2048,14 +2025,33 @@ begin
   UpdateBarPhase;
 end;
 
-{ InAppFileDropDelegate.dropEntered / dropUpdated: the whole chart pane
-  takes the drop. }
-function TMainForm.ChartDropUpdate(const ScreenPt: TPoint): Boolean;
+{ InAppFileDropDelegate.dropEntered / dropUpdated. Swift takes drops
+  anywhere in the chart pane; here (ikari's call, 2026-10-06) only near
+  the collector: the bar, its list, or the band just above the bar, so
+  passing over the chart does not arm the drop. }
+function TMainForm.InCollectorDropBand(const ScreenPt: TPoint): Boolean;
+var
+  P: TPoint;
 begin
-  Result := True;
-  if not FDropTargeted then
+  P := FChartPanel.ScreenToClient(ScreenPt);
+  Result := FCollectorBar.InKeepZone(ScreenPt) or
+    ((P.Y >= FCollectorBar.Top - CollectorDropBand) and (P.Y <= FCollectorBar.Top) and
+     (P.X >= FCollectorBar.Left) and (P.X <= FCollectorBar.Left + FCollectorBar.Width));
+end;
+
+function TMainForm.ChartDropUpdate(const ScreenPt: TPoint): Boolean;
+var
+  Inside: Boolean;
+begin
+  { A drag-out may be released anywhere in the pane: outside the keep
+    zones it unstages. }
+  if FCollector.IsDraggingOut then
+    Exit(True);
+  Inside := InCollectorDropBand(ScreenPt);
+  Result := Inside;
+  if Inside <> FDropTargeted then
   begin
-    FDropTargeted := True;
+    FDropTargeted := Inside;
     UpdateBarPhase;
   end;
 end;
@@ -2084,6 +2080,8 @@ begin
     RefreshList;
     Exit;
   end;
+  if not InCollectorDropBand(ScreenPt) then
+    Exit(False);
   FRejectTimer.Enabled := False;
   FDragReject := '';
   Allowed := nil;
