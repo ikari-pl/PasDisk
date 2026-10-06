@@ -88,6 +88,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="PlatformMotion.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="PlatformFileDrag.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

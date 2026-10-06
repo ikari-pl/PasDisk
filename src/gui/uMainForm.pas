@@ -17,7 +17,7 @@ uses
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
   PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing,
-  PlatformListBatch, PlatformChartAccessibility;
+  PlatformListBatch, PlatformChartAccessibility, Motion, PlatformMotion;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -119,6 +119,10 @@ type
       and the row under the pointer, -1 for none. }
     FListMaxSize: Int64;
     FListHover: Integer;
+    { HoverHighlight: each row's wash fades over 0.15 s (easeInOut). }
+    FHoverRows: array of Integer;
+    FHoverFades: array of TAnimatedValue;
+    FHoverClock: TFrameClock;
     FChartPanel: TPanel;
     FChart: TRingsChart;
     { CollectorBar.swift at the bottom of the chart column (od-31j.18.6). }
@@ -214,6 +218,10 @@ type
     procedure ApplyListAutomation;
     procedure SortListRows;
     procedure SetListHover(Index: Integer);
+    function HoverAmount(Row: Integer; NowMs: QWord): Double;
+    procedure FadeRowHover(Row: Integer; Target: Double; NowMs: QWord);
+    procedure HoverFrame(Sender: TObject);
+    procedure InvalidateListRow(Row: Integer);
     procedure ChartSelect(Sender: TObject; const APath: string; IsCenter: Boolean);
     procedure DisksClick(Sender: TObject);
     procedure BackClick(Sender: TObject);
@@ -240,6 +248,7 @@ type
     procedure MenuQuickLookClick(Sender: TObject);
     procedure QuickLookHookTick(Sender: TObject);
     procedure A11yDumpTick(Sender: TObject);
+    procedure ListHoverHookTick(Sender: TObject);
     procedure CollectorRowMenu(Sender: TObject; const Path: string;
       const ScreenPt: TPoint);
     procedure CollectorPreviewClick(Sender: TObject);
@@ -1307,6 +1316,7 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  FreeAndNil(FHoverClock);
   StopWatchingAppearance;
   CancelScan;
   FSearch.Free;
@@ -1617,6 +1627,15 @@ begin
         { After a paint: the status bar describes what it drew. }
         Interval := 800;
         OnTimer := @A11yDumpTick;
+        Enabled := True;
+      end;
+    { Automation: OPENDISK_GUI_LIST_HOVER=<row> hovers that row (the fade
+      runs) and reports the frame clock. }
+    if GetEnvironmentVariable('OPENDISK_GUI_LIST_HOVER') <> '' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 1500;
+        OnTimer := @ListHoverHookTick;
         Enabled := True;
       end;
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
@@ -1954,6 +1973,9 @@ begin
     FList.Clear;
     FListMaxSize := 0;
     FListHover := -1;
+    { Rows are renumbered: no fade carries over. }
+    FHoverRows := nil;
+    FHoverFades := nil;
     FPurgeableTotal := 0;
     FPurgeableCount := 0;
     FPurgeableEntries := nil;
@@ -2777,6 +2799,15 @@ begin
   CollectorRemove(nil, FMenuItem.Path);
 end;
 
+procedure TMainForm.ListHoverHookTick(Sender: TObject);
+begin
+  (Sender as TTimer).Enabled := False;
+  SetListHover(StrToIntDef(GetEnvironmentVariable('OPENDISK_GUI_LIST_HOVER'), -1));
+  WriteLn('hover clock: running=', FHoverClock.Running, ' display link=',
+    FHoverClock.DisplayLinked, ' reduce motion=', ReduceMotion);
+  Flush(Output);
+end;
+
 procedure TMainForm.A11yDumpTick(Sender: TObject);
 begin
   (Sender as TTimer).Enabled := False;
@@ -2906,7 +2937,7 @@ var
   SizeKnown: Boolean;
   FullName, Location: string;
   IconRect: TRect;
-  Frac: Double;
+  Frac, Hover: Double;
 begin
   LB := Control as TListBox;
   C := LB.Canvas;
@@ -2975,18 +3006,20 @@ begin
   C.FillRect(ARect);
 
   Row := Rect(ARect.Left + 4, ARect.Top + 2, ARect.Right - 4, ARect.Bottom - 2);
-  if Selected or (Index = FListHover) then
+  Hover := HoverAmount(Index, GetTickCount64);
+  if Selected or (Hover > 0.01) then
   begin
     if Selected then
       C.Brush.Color := ColorToRGB(clHighlight)
     else
     begin
-      { Hover: a faint wash of the secondary colour over the panel. }
+      { Hover: a faint wash of the secondary colour (1/8) over the panel,
+        faded in and out. }
       Ink := SecondaryTextColor(CPanel);
       C.Brush.Color := RGBToColor(
-        (Red(Ink) + 7 * Red(Bg)) div 8,
-        (Green(Ink) + 7 * Green(Bg)) div 8,
-        (Blue(Ink) + 7 * Blue(Bg)) div 8);
+        Round(Red(Bg) + (Red(Ink) - Red(Bg)) * Hover / 8),
+        Round(Green(Bg) + (Green(Ink) - Green(Bg)) * Hover / 8),
+        Round(Blue(Bg) + (Blue(Ink) - Blue(Bg)) * Hover / 8));
     end;
     C.Pen.Style := psClear;
     C.RoundRect(Row, 16, 16);
@@ -3132,26 +3165,97 @@ begin
   end;
 end;
 
+procedure TMainForm.InvalidateListRow(Row: Integer);
+var
+  R: TRect;
+begin
+  if (Row >= 0) and (Row < FList.Items.Count) then
+  begin
+    R := FList.ItemRect(Row);
+    InvalidateRect(FList.Handle, @R, False);
+  end;
+end;
+
+function TMainForm.HoverAmount(Row: Integer; NowMs: QWord): Double;
+var
+  I: Integer;
+begin
+  for I := 0 to High(FHoverRows) do
+    if FHoverRows[I] = Row then
+      Exit(ValueAt(FHoverFades[I], NowMs));
+  Result := 0;
+end;
+
+procedure TMainForm.FadeRowHover(Row: Integer; Target: Double; NowMs: QWord);
+var
+  I, Duration: Integer;
+begin
+  if (Row < 0) or (Row >= FList.Items.Count) then
+    Exit;
+  { Reduce Motion: the highlight changes at once. }
+  if ReduceMotion then
+    Duration := 0
+  else
+    Duration := 150;
+  for I := 0 to High(FHoverRows) do
+    if FHoverRows[I] = Row then
+    begin
+      Retarget(FHoverFades[I], Target, NowMs, Duration, eaEaseInOut);
+      Exit;
+    end;
+  if Target = 0 then
+    Exit;
+  SetLength(FHoverRows, Length(FHoverRows) + 1);
+  SetLength(FHoverFades, Length(FHoverFades) + 1);
+  FHoverRows[High(FHoverRows)] := Row;
+  FHoverFades[High(FHoverFades)] := AnimatedAt(0);
+  Retarget(FHoverFades[High(FHoverFades)], Target, NowMs, Duration, eaEaseInOut);
+end;
+
+{ One display frame: repaint the fading rows; forget faded-out rows and
+  stop the clock once nothing moves. }
+procedure TMainForm.HoverFrame(Sender: TObject);
+var
+  I, N: Integer;
+  NowMs: QWord;
+  Moving: Boolean;
+begin
+  NowMs := GetTickCount64;
+  Moving := False;
+  N := 0;
+  for I := 0 to High(FHoverRows) do
+  begin
+    InvalidateListRow(FHoverRows[I]);
+    if not AtRest(FHoverFades[I], NowMs) then
+      Moving := True;
+    { Keep rows still fading or resting highlighted. }
+    if not AtRest(FHoverFades[I], NowMs) or (FHoverFades[I].ToValue > 0) then
+    begin
+      FHoverRows[N] := FHoverRows[I];
+      FHoverFades[N] := FHoverFades[I];
+      Inc(N);
+    end;
+  end;
+  SetLength(FHoverRows, N);
+  SetLength(FHoverFades, N);
+  if not Moving then
+    FHoverClock.Stop;
+end;
+
 procedure TMainForm.SetListHover(Index: Integer);
 var
-  Old: Integer;
-  R: TRect;
+  NowMs: QWord;
 begin
   if Index = FListHover then
     Exit;
-  Old := FListHover;
+  NowMs := GetTickCount64;
+  FadeRowHover(FListHover, 0, NowMs);
   FListHover := Index;
-  { Repaint only the two rows whose hover state changed. }
-  if (Old >= 0) and (Old < FList.Items.Count) then
-  begin
-    R := FList.ItemRect(Old);
-    InvalidateRect(FList.Handle, @R, False);
-  end;
-  if (Index >= 0) and (Index < FList.Items.Count) then
-  begin
-    R := FList.ItemRect(Index);
-    InvalidateRect(FList.Handle, @R, False);
-  end;
+  FadeRowHover(Index, 1, NowMs);
+  if FHoverClock = nil then
+    FHoverClock := TFrameClock.Create(FList, @HoverFrame);
+  FHoverClock.Start;
+  HoverFrame(nil);
 end;
 
 procedure TMainForm.ListMouseMove(Sender: TObject; Shift: TShiftState;

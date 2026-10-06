@@ -19,7 +19,7 @@ unit CollectorBarView;
 interface
 
 uses
-  Classes, SysUtils, Math, Graphics, Controls, ExtCtrls, Types;
+  Classes, SysUtils, Math, Graphics, Controls, ExtCtrls, Types, Motion, PlatformMotion;
 
 type
   TCollectorPhase = (cbIdle, cbTargeted, cbRejecting, cbDeleting, cbDone);
@@ -53,6 +53,10 @@ type
     FHover: Integer;
     FPressRow, FPressX, FPressY: Integer;
     FDragged: Boolean;
+    { .transition(.opacity.combined(with: .move(edge: .bottom))): 1 shown,
+      0 gone; FRestTop is where it sits when shown. }
+    FShown: TAnimatedValue;
+    FRestTop: Integer;
     { ScrollView offset: the list scrolls once its rows outgrow the panel. }
     FScroll: Integer;
     function MaxScroll: Integer;
@@ -94,6 +98,16 @@ type
     FDraggingOut: Boolean;
     FPressed, FDragged: Boolean;
     FPressX, FPressY: Integer;
+    FMotion: TFrameClock;
+    { .animation(.easeInOut(duration: 0.15), value: collecting/rejecting):
+      the drag tint fades in and out; FTintColor is the last one shown. }
+    FTint: TAnimatedValue;
+    FTintColor: TColor;
+    function TintColorFor(Phase: TCollectorPhase): TColor;
+    procedure ShowOverlay(O: TCollectorOverlay; const R: TRect);
+    procedure HideOverlay(O: TCollectorOverlay);
+    procedure PlaceOverlay(O: TCollectorOverlay; NowMs: QWord);
+    procedure MotionFrame(Sender: TObject);
     procedure CollapseTick(Sender: TObject);
     procedure NoticeTick(Sender: TObject);
     procedure SpinTick(Sender: TObject);
@@ -102,8 +116,9 @@ type
     function WantsList: Boolean;
     function TotalBytes: Int64;
     function PanelColor: TColor;
+    { Amount scales the tint and border, for fades. }
     procedure DrawPanel(C: TCanvas; const R: TRect; Tint: TColor; HasTint: Boolean;
-      BorderColor: TColor; HasBorder: Boolean);
+      BorderColor: TColor; HasBorder: Boolean; Amount: Double = 1);
     procedure DrawSymbol(C: TCanvas; const SymName: string; X, Y, Size: Integer; SymColor: TColor);
     procedure ListHover(Value: Boolean);
   protected
@@ -142,7 +157,7 @@ type
 implementation
 
 uses
-  LCLType, LCLIntf, PlatformImages, GuiColors, Formatters, TextTrim, DesignTokens;
+  LCLType, LCLIntf, PlatformImages, GuiColors, Formatters, TextTrim, DesignTokens, PlatformAppearance;
 
 const
   Radius = 16;
@@ -421,6 +436,7 @@ begin
   FCollapse.Enabled := False;
   FNoticeTimer.Enabled := False;
   FSpin.Enabled := False;
+  FreeAndNil(FMotion);
   inherited Destroy;
 end;
 
@@ -438,7 +454,7 @@ begin
 end;
 
 procedure TCollectorBarView.DrawPanel(C: TCanvas; const R: TRect; Tint: TColor;
-  HasTint: Boolean; BorderColor: TColor; HasBorder: Boolean);
+  HasTint: Boolean; BorderColor: TColor; HasBorder: Boolean; Amount: Double);
 var
   Bg: TColor;
   I: Integer;
@@ -455,13 +471,13 @@ begin
   end;
   C.Brush.Color := PanelColor;
   if HasTint then
-    C.Brush.Color := Blend(PanelColor, Tint, 0.18);
+    C.Brush.Color := Blend(PanelColor, Tint, 0.18 * Amount);
   C.RoundRect(R.Left, R.Top, R.Right, R.Bottom, 2 * Radius, 2 * Radius);
   if HasBorder then
   begin
     C.Brush.Style := bsClear;
     C.Pen.Style := psSolid;
-    C.Pen.Color := ColorToRGB(BorderColor);
+    C.Pen.Color := Blend(PanelColor, BorderColor, Amount);
     C.Pen.Width := 2;
     C.RoundRect(R.Left + 1, R.Top + 1, R.Right - 1, R.Bottom - 1, 2 * Radius, 2 * Radius);
     C.Pen.Width := 1;
@@ -526,13 +542,11 @@ begin
   C.Brush.Color := Bg;
   C.FillRect(ClientRect);
   Panel := Rect(0, 0, ClientWidth, ClientHeight - ShadowSpace);
-  Accent := ColorToRGB(clHighlight);
-  case FPhase of
-    cbTargeted: DrawPanel(C, Panel, Accent, True, Accent, True);
-    cbRejecting: DrawPanel(C, Panel, SystemRed, True, SystemRed, True);
+  Accent := TintColorFor(cbTargeted);
+  if ValueAt(FTint, GetTickCount64) > 0.001 then
+    DrawPanel(C, Panel, FTintColor, True, FTintColor, True, ValueAt(FTint, GetTickCount64))
   else
     DrawPanel(C, Panel, clNone, False, clNone, False);
-  end;
   Secondary := SecondaryTextColor(PanelColor);
   Ink := ColorToRGB(clWindowText);
   C.Brush.Style := bsClear;
@@ -706,6 +720,100 @@ begin
     (FForceList or FFooterHovered or FListHovered);
 end;
 
+{ CollectorBar's list and notice: in and out with a 0.3 s spring, fading
+  while they slide from (or to) the footer; Reduce Motion swaps them at
+  once. }
+procedure TCollectorBarView.ShowOverlay(O: TCollectorOverlay; const R: TRect);
+var
+  NowMs: QWord;
+  Duration: Integer;
+begin
+  NowMs := GetTickCount64;
+  if ReduceMotion then
+    Duration := 0
+  else
+    Duration := 300;
+  O.FRestTop := R.Top;
+  if not O.Visible then
+  begin
+    O.FShown := AnimatedAt(0);
+    O.SetBounds(R.Left, R.Top + (R.Bottom - R.Top), R.Right - R.Left, R.Bottom - R.Top);
+    O.Visible := True;
+    SetControlAlpha(O, 0);
+  end
+  else
+    O.SetBounds(R.Left, O.Top, R.Right - R.Left, R.Bottom - R.Top);
+  O.BringToFront;
+  Retarget(O.FShown, 1, NowMs, Duration, eaSpring);
+  PlaceOverlay(O, NowMs);
+  if FMotion = nil then
+    FMotion := TFrameClock.Create(Self, @MotionFrame);
+  FMotion.Start;
+end;
+
+procedure TCollectorBarView.HideOverlay(O: TCollectorOverlay);
+var
+  Duration: Integer;
+begin
+  if (O = nil) or not O.Visible then
+    Exit;
+  if ReduceMotion then
+    Duration := 0
+  else
+    Duration := 300;
+  Retarget(O.FShown, 0, GetTickCount64, Duration, eaSpring);
+  if FMotion = nil then
+    FMotion := TFrameClock.Create(Self, @MotionFrame);
+  FMotion.Start;
+  MotionFrame(nil);
+end;
+
+procedure TCollectorBarView.PlaceOverlay(O: TCollectorOverlay; NowMs: QWord);
+var
+  P: Double;
+begin
+  P := ValueAt(O.FShown, NowMs);
+  { Automation: OPENDISK_DEBUG_MOTION=1 logs each frame of the transition. }
+  if GetEnvironmentVariable('OPENDISK_DEBUG_MOTION') = '1' then
+  begin
+    WriteLn(Format('motion %d ms: shown %.3f top %d (rest %d)',
+      [NowMs - O.FShown.StartMs, P, O.FRestTop + Round((1 - P) * O.Height), O.FRestTop]));
+    Flush(Output);
+  end;
+  SetControlAlpha(O, P);
+  O.Top := O.FRestTop + Round((1 - P) * O.Height);
+  { Gone: hidden for real, opaque again for its next showing. }
+  if AtRest(O.FShown, NowMs) and (O.FShown.ToValue = 0) then
+  begin
+    O.Visible := False;
+    O.Top := O.FRestTop;
+    SetControlAlpha(O, 1);
+  end;
+end;
+
+procedure TCollectorBarView.MotionFrame(Sender: TObject);
+var
+  NowMs: QWord;
+  Moving: Boolean;
+begin
+  NowMs := GetTickCount64;
+  Moving := not AtRest(FTint, NowMs);
+  if Moving or (FTint.StartMs + QWord(FTint.DurationMs) + 50 > NowMs) then
+    Invalidate;
+  if (FList <> nil) and FList.Visible then
+  begin
+    PlaceOverlay(FList, NowMs);
+    Moving := not AtRest(FList.FShown, NowMs);
+  end;
+  if (FNoticePanel <> nil) and FNoticePanel.Visible then
+  begin
+    PlaceOverlay(FNoticePanel, NowMs);
+    Moving := Moving or not AtRest(FNoticePanel.FShown, NowMs);
+  end;
+  if not Moving and (FMotion <> nil) then
+    FMotion.Stop;
+end;
+
 procedure TCollectorBarView.UpdateOverlays;
 var
   H, Bottom: Integer;
@@ -718,21 +826,17 @@ begin
     FCollapse.Enabled := False;
     { listHeight = min(600, count * 30 + 16), within the room above. }
     H := Min(Min(600, Length(FItems) * RowHeight + 16), Bottom - ShadowSpace - 8) + ShadowSpace;
-    FList.SetBounds(Left, Bottom - H, Width, H);
-    FList.Visible := True;
-    FList.BringToFront;
+    ShowOverlay(FList, Rect(Left, Bottom - H, Left + Width, Bottom));
     FList.Invalidate;
   end;
   if FNotice <> '' then
   begin
     H := 44 + ShadowSpace;
-    FNoticePanel.SetBounds(Left, Bottom - H, Width, H);
-    FNoticePanel.Visible := True;
-    FNoticePanel.BringToFront;
+    ShowOverlay(FNoticePanel, Rect(Left, Bottom - H, Left + Width, Bottom));
     FNoticePanel.Invalidate;
   end
   else
-    FNoticePanel.Visible := False;
+    HideOverlay(FNoticePanel);
 end;
 
 procedure TCollectorBarView.ListHover(Value: Boolean);
@@ -748,7 +852,7 @@ procedure TCollectorBarView.CollapseTick(Sender: TObject);
 begin
   FCollapse.Enabled := False;
   if not WantsList then
-    FList.Visible := False;
+    HideOverlay(FList);
 end;
 
 procedure TCollectorBarView.NoticeTick(Sender: TObject);
@@ -817,7 +921,7 @@ begin
   FDraggingOut := Value;
   { The list disappears while its items are dragged out. }
   if Value and (FList <> nil) then
-    FList.Visible := False;
+    HideOverlay(FList);
   UpdateOverlays;
 end;
 
@@ -855,12 +959,39 @@ begin
   if WantsList then
     UpdateOverlays
   else
-    FList.Visible := False;
+    HideOverlay(FList);
   Invalidate;
 end;
 
-procedure TCollectorBarView.SetPhase(Phase: TCollectorPhase; const RejectReason: string);
+function TCollectorBarView.TintColorFor(Phase: TCollectorPhase): TColor;
 begin
+  if Phase = cbRejecting then
+    Result := SystemRed
+  else
+    { .accentColor, not the (inactive-pale) selection colour. }
+    Result := AccentColor(ColorToRGB(clHighlight));
+end;
+
+procedure TCollectorBarView.SetPhase(Phase: TCollectorPhase; const RejectReason: string);
+var
+  Duration: Integer;
+begin
+  if Phase in [cbTargeted, cbRejecting] then
+    FTintColor := TintColorFor(Phase);
+  if ReduceMotion then
+    Duration := 0
+  else
+    Duration := 150;
+  if Phase in [cbTargeted, cbRejecting] then
+    Retarget(FTint, 1, GetTickCount64, Duration, eaEaseInOut)
+  else
+    Retarget(FTint, 0, GetTickCount64, Duration, eaEaseInOut);
+  if not AtRest(FTint, GetTickCount64) then
+  begin
+    if FMotion = nil then
+      FMotion := TFrameClock.Create(Self, @MotionFrame);
+    FMotion.Start;
+  end;
   FPhase := Phase;
   FRejectReason := RejectReason;
   FSpin.Enabled := Phase = cbDeleting;
@@ -868,7 +999,7 @@ begin
     FSpinStart := GetTickCount64;
   UpdateHeight;
   if not WantsList then
-    FList.Visible := False;
+    HideOverlay(FList);
   Invalidate;
 end;
 
@@ -902,7 +1033,7 @@ begin
   FForceList := Value;
   UpdateOverlays;
   if not WantsList then
-    FList.Visible := False;
+    HideOverlay(FList);
 end;
 
 end.
