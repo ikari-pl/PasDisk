@@ -53,6 +53,10 @@ procedure StrokeContinuedEdge(ACanvas: TCanvas; CX, CY, Radius, A0, A1: Double;
 procedure DrawTextOnArc(ACanvas: TCanvas; const Text: string; CX, CY,
   Radius, MidAngle: Double; Color: TColor; FontSize: Double; Flip: Boolean);
 
+{ Fills R with Color at Alpha (0..1) over what is already drawn, for
+  fades (a row appearing is covered by the background, less and less). }
+procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
+
 implementation
 
 {$IFDEF DARWIN}
@@ -181,7 +185,35 @@ begin
   CFRelease(Attrs);
   CFRelease(Font);
 end;
+procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
+var
+  Ctx: CGContextRef;
+  RGB: TColor;
+begin
+  if Alpha <= 0 then
+    Exit;
+  Ctx := CanvasCGContext(ACanvas);
+  if Ctx = nil then
+    Exit;
+  RGB := ColorToRGB(Color);
+  CGContextSaveGState(Ctx);
+  CGContextSetRGBFillColor(Ctx, Red(RGB) / 255, Green(RGB) / 255, Blue(RGB) / 255,
+    Min(1, Alpha));
+  CGContextFillRect(Ctx, CGRectMake(R.Left, R.Top, R.Right - R.Left, R.Bottom - R.Top));
+  CGContextRestoreGState(Ctx);
+end;
 {$ELSE}
+procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
+begin
+  { No blending: covered only while mostly transparent. }
+  if Alpha >= 0.5 then
+  begin
+    ACanvas.Brush.Style := bsSolid;
+    ACanvas.Brush.Color := Color;
+    ACanvas.FillRect(R);
+  end;
+end;
+
 function BackingScaleFor(Control: TWinControl): Double;
 begin
   Result := 1;

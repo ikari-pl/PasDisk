@@ -17,7 +17,8 @@ uses
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
   PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing,
-  PlatformListBatch, PlatformChartAccessibility, Motion, PlatformMotion;
+  PlatformListBatch, PlatformChartAccessibility, Motion, PlatformMotion,
+  PlatformChartCanvas;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -123,6 +124,14 @@ type
     FHoverRows: array of Integer;
     FHoverFades: array of TAnimatedValue;
     FHoverClock: TFrameClock;
+    { Paths listed by the previous refresh, sorted; nil before the first. }
+    FListPaths: TStringList;
+    { Many new rows (a new folder) share FAppearAll; a few fade per row. }
+    FAppearAll: TAnimatedValue;
+    { Per-path fades: rows are re-sorted between refreshes, and a scan
+      refreshes several times while a fade runs. }
+    FAppearPaths: array of string;
+    FAppearFades: array of TAnimatedValue;
     FChartPanel: TPanel;
     FChart: TRingsChart;
     { CollectorBar.swift at the bottom of the chart column (od-31j.18.6). }
@@ -191,6 +200,11 @@ type
     procedure ScanFinished;
     procedure ShowNode(const APath: string);
     procedure RefreshList;
+    procedure RebuildList;
+    { ScanResultsView .animation(.snappy(duration: 0.18), value:
+      displayVersion): rows that were not listed before fade in. }
+    procedure StartRowAppearances;
+    function AppearAmount(Row: Integer; NowMs: QWord): Double;
     procedure RefreshCollector;
     procedure VolListDrawItem(Control: TWinControl; Index: Integer;
       ARect: TRect; State: TOwnerDrawState);
@@ -506,6 +520,8 @@ begin
   end;
   FCollector := TCollector.Create;
   FBreadcrumbs := TStringList.Create;
+  { Nothing is appearing until the first listing. }
+  FAppearAll := AnimatedAt(1);
   FTree := nil;
   FScanThread := nil;
   FMode := umPicker;
@@ -1317,6 +1333,7 @@ end;
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   FreeAndNil(FHoverClock);
+  FreeAndNil(FListPaths);
   StopWatchingAppearance;
   CancelScan;
   FSearch.Free;
@@ -1950,6 +1967,78 @@ begin
 end;
 
 procedure TMainForm.RefreshList;
+begin
+  RebuildList;
+  StartRowAppearances;
+end;
+
+procedure TMainForm.StartRowAppearances;
+const
+  { More new rows than this fade together, as a whole new listing. }
+  SharedFade = 50;
+var
+  Fresh: TStringList;
+  NewPaths: array of string;
+  Item: TFolderItem;
+  I, Ignored: Integer;
+  NowMs: QWord;
+begin
+  Fresh := TStringList.Create;
+  Fresh.Sorted := True;
+  Fresh.Duplicates := dupIgnore;
+  NewPaths := nil;
+  for I := 0 to FList.Items.Count - 1 do
+    if RowItem(I, Item) then
+    begin
+      Fresh.Add(Item.Path);
+      if (FListPaths = nil) or not FListPaths.Find(Item.Path, Ignored) then
+      begin
+        SetLength(NewPaths, Length(NewPaths) + 1);
+        NewPaths[High(NewPaths)] := Item.Path;
+      end;
+    end;
+  FreeAndNil(FListPaths);
+  FListPaths := Fresh;
+  if (Length(NewPaths) = 0) or ReduceMotion then
+    Exit;
+  NowMs := GetTickCount64;
+  if Length(NewPaths) > SharedFade then
+  begin
+    { A new listing: one fade for all, replacing any row fades. }
+    FAppearAll := AnimatedAt(0);
+    Retarget(FAppearAll, 1, NowMs, 180, eaSnappy);
+    FAppearPaths := nil;
+    FAppearFades := nil;
+  end
+  else
+    { New rows join; fades already running keep going. }
+    for I := 0 to High(NewPaths) do
+    begin
+      SetLength(FAppearPaths, Length(FAppearPaths) + 1);
+      SetLength(FAppearFades, Length(FAppearFades) + 1);
+      FAppearPaths[High(FAppearPaths)] := NewPaths[I];
+      FAppearFades[High(FAppearFades)] := AnimatedAt(0);
+      Retarget(FAppearFades[High(FAppearFades)], 1, NowMs, 180, eaSnappy);
+    end;
+  if FHoverClock = nil then
+    FHoverClock := TFrameClock.Create(FList, @HoverFrame);
+  FHoverClock.Start;
+end;
+
+function TMainForm.AppearAmount(Row: Integer; NowMs: QWord): Double;
+var
+  I: Integer;
+  Item: TFolderItem;
+begin
+  Result := ValueAt(FAppearAll, NowMs);
+  if (Length(FAppearPaths) = 0) or not RowItem(Row, Item) then
+    Exit;
+  for I := 0 to High(FAppearPaths) do
+    if FAppearPaths[I] = Item.Path then
+      Exit(Min(Result, ValueAt(FAppearFades[I], NowMs)));
+end;
+
+procedure TMainForm.RebuildList;
 var
   Node, Child: TNodeID;
   Listed: TNodeIDArray;
@@ -3163,6 +3252,10 @@ begin
     C.Font.Color := Tertiary;
     C.TextOut(TextLeft, NameTop + NameLine + 2, Detail);
   end;
+  { A row still appearing: the panel over it, less and less. }
+  Frac := AppearAmount(Index, GetTickCount64);
+  if Frac < 1 then
+    FillRectAlpha(C, ARect, CPanel, 1 - Frac);
 end;
 
 procedure TMainForm.InvalidateListRow(Row: Integer);
@@ -3222,6 +3315,33 @@ var
 begin
   NowMs := GetTickCount64;
   Moving := False;
+  if GetEnvironmentVariable('OPENDISK_DEBUG_MOTION') = '1' then
+  begin
+    WriteLn(Format('appear %d ms: all %.3f, %d row fades', [NowMs - FAppearAll.StartMs,
+      ValueAt(FAppearAll, NowMs), Length(FAppearPaths)]));
+    Flush(Output);
+  end;
+  { Row appearances: the whole list, or the few new rows. }
+  if not AtRest(FAppearAll, NowMs) or (FAppearAll.StartMs + QWord(FAppearAll.DurationMs) + 40 > NowMs) then
+  begin
+    FList.Invalidate;
+    Moving := not AtRest(FAppearAll, NowMs);
+  end;
+  { Row fades: their rows move with sorting, so the list repaints while
+    any runs (and once more as they finish). }
+  if Length(FAppearPaths) > 0 then
+    FList.Invalidate;
+  N := 0;
+  for I := 0 to High(FAppearPaths) do
+    if not AtRest(FAppearFades[I], NowMs) then
+    begin
+      Moving := True;
+      FAppearPaths[N] := FAppearPaths[I];
+      FAppearFades[N] := FAppearFades[I];
+      Inc(N);
+    end;
+  SetLength(FAppearPaths, N);
+  SetLength(FAppearFades, N);
   N := 0;
   for I := 0 to High(FHoverRows) do
   begin
