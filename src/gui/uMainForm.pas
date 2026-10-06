@@ -2852,11 +2852,15 @@ begin
   FMenuRow := -1;
   FRowMenu.Items.Clear;
   AddMenuItem('Preview', 'eye', @CollectorPreviewClick);
+  { .keyboardShortcut(.space, modifiers: []) }
+  FRowMenu.Items[FRowMenu.Items.Count - 1].ShortCut := ShortCut(VK_SPACE, []);
   AddMenuItem('Show in Finder', 'folder', @MenuShowInFinderClick);
   AddMenuItem('Open in Terminal', 'terminal', @CollectorTerminalClick);
   AddMenuItem('-', '', nil);
   AddMenuItem('Remove “' + F.Name + '” from Collector', 'xmark.circle',
     @CollectorRemoveClick);
+  { .keyboardShortcut(.delete, modifiers: .command) }
+  FRowMenu.Items[FRowMenu.Items.Count - 1].ShortCut := ShortCut(VK_BACK, [ssMeta]);
   FRowMenu.PopUp(ScreenPt.X, ScreenPt.Y);
 end;
 
