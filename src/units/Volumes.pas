@@ -80,13 +80,30 @@ end;
 function SelectVolumes(const Probe: TVolumeProbe): TVolumeInfoArray;
 var
   Name: string;
-  I: Integer;
+  Order: array of Integer;
+  K, J, T, I: Integer;
 begin
   SetLength(Result, 0);
   if Probe.HasRootCapacity then
     Append(Result, Probe.RootPath, 'Computer', Probe.RootCapacity);
-  for I := 0 to High(Probe.Mounts) do
+  { DeviceMonitor.swift: mounted volumes sorted by path. }
+  SetLength(Order, Length(Probe.Mounts));
+  for K := 0 to High(Order) do
+    Order[K] := K;
+  for K := 1 to High(Order) do
   begin
+    T := Order[K];
+    J := K - 1;
+    while (J >= 0) and (CompareStr(Probe.Mounts[Order[J]].Path, Probe.Mounts[T].Path) > 0) do
+    begin
+      Order[J + 1] := Order[J];
+      Dec(J);
+    end;
+    Order[J + 1] := T;
+  end;
+  for K := 0 to High(Order) do
+  begin
+    I := Order[K];
     if not Probe.Mounts[I].Browsable then
       Continue;
     if Probe.Devices[I] = 0 then

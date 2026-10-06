@@ -78,6 +78,14 @@ begin
       'nameless mount named by basename; boot-device duplicates dropped');
   end;
 
+  { Mounts come back sorted by path, whatever the OS order. }
+  Probe.Mounts[1].Path := '/Volumes/Zeta'; Probe.Mounts[1].Name := 'Zeta';
+  Probe.Mounts[3].Path := '/Volumes/Alpha'; Probe.Mounts[3].Name := 'Alpha';
+  Probe.Readable[3] := True;
+  Vols := SelectVolumes(Probe);
+  Expect((Length(Vols) = 3) and (Vols[0].Name = 'Computer') and (Vols[1].Name = 'Alpha') and
+    (Vols[2].Name = 'Zeta'), 'volumes sorted by mount path after Computer');
+
   Expect(DeviceOfPath(SystemRootPath, BootDev), 'boot device id readable');
   Expect(VolumeCapacityOf(SystemRootPath, Cap) and (Cap.TotalBytes > 0) and
     (Cap.FreeBytes <= Cap.TotalBytes), 'boot volume capacity is sane');
