@@ -89,11 +89,12 @@ tests/test_volumes: tests/test_volumes.pas $(UNITDIR)/Volumes.pas \
 	$(FPC) $(BUILDFLAGS) -otests/test_volumes tests/test_volumes.pas
 
 tests/test_collector: tests/test_collector.pas $(UNITDIR)/Collector.pas \
-		$(UNITDIR)/PlatformRemove.pas $(UNITDIR)/ProtectedPaths.pas
+		$(UNITDIR)/PlatformRemove.pas $(UNITDIR)/ProtectedPaths.pas $(UNITDIR)/PlatformProtectedRoots.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_collector tests/test_collector.pas
 
 tests/test_protectedpaths: tests/test_protectedpaths.pas \
-		$(UNITDIR)/ProtectedPaths.pas $(UNITDIR)/PlatformFS.pas
+		$(UNITDIR)/ProtectedPaths.pas $(UNITDIR)/PlatformProtectedRoots.pas \
+		$(UNITDIR)/PlatformFS.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_protectedpaths tests/test_protectedpaths.pas
 
 tests/test_ringslayout: tests/test_ringslayout.pas $(UNITDIR)/RingsLayout.pas \
