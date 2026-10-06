@@ -19,9 +19,16 @@ uses
 
 procedure DrawVolumeIcon(ACanvas: TCanvas; const Bounds: TRect; const Path: string);
 
+{ FolderRowView.swift:124-147. Uses a 22-point row icon rendered at 2x.
+  Existing paths use NSWorkspace iconForFile:, while a missing path uses the
+  extension/type cache; directories fall back to the shared folder icon. }
+procedure DrawFileIcon(ACanvas: TCanvas; const Bounds: TRect; const Path: string;
+  IsDirectory: Boolean);
+
 { Forget cached icons (call when the volume list is rebuilt, so unmounted
   volumes and failed lookups do not accumulate). }
 procedure ClearVolumeIconCache;
+procedure ClearFileIconCache;
 
 { SF Symbol Name (e.g. 'lock.slash') as a Px x Px bitmap in Color, the
   symbol fitted and centred; nil when unavailable. Caller owns it. }
@@ -33,9 +40,85 @@ uses
   SysUtils, Classes, Math, IntfGraphics, FPImage, GraphType
   {$IFDEF DARWIN}, MacOSAll{$ENDIF};
 
+type
+  { Bounded icon cache (FileIcon.swift NSCache countLimit): sorted keys for
+    binary-search lookup, insertion order for evicting the oldest. Owns its
+    bitmaps; a bitmap is never in two caches. }
+  TIconCache = class
+  private
+    FByKey: TStringList;
+    FOrder: TStringList;
+    FLimit: Integer;
+  public
+    constructor Create(Limit: Integer);
+    destructor Destroy; override;
+    function Find(const Key: string; out Icon: TBitmap): Boolean;
+    procedure Put(const Key: string; Icon: TBitmap);
+    procedure Clear;
+  end;
+
+constructor TIconCache.Create(Limit: Integer);
+begin
+  inherited Create;
+  FLimit := Limit;
+  FByKey := TStringList.Create;
+  FByKey.Sorted := True;
+  FByKey.Duplicates := dupIgnore;
+  FByKey.CaseSensitive := True;
+  FByKey.OwnsObjects := True;
+  FOrder := TStringList.Create;
+end;
+
+destructor TIconCache.Destroy;
+begin
+  FByKey.Free;
+  FOrder.Free;
+  inherited Destroy;
+end;
+
+function TIconCache.Find(const Key: string; out Icon: TBitmap): Boolean;
+var
+  Idx: Integer;
+begin
+  Result := FByKey.Find(Key, Idx);
+  if Result then
+    Icon := TBitmap(FByKey.Objects[Idx])
+  else
+    Icon := nil;
+end;
+
+procedure TIconCache.Put(const Key: string; Icon: TBitmap);
+var
+  Idx: Integer;
+begin
+  if FByKey.Find(Key, Idx) then
+  begin
+    Icon.Free;
+    Exit;
+  end;
+  while FOrder.Count >= FLimit do
+  begin
+    if FByKey.Find(FOrder[0], Idx) then
+      FByKey.Delete(Idx);
+    FOrder.Delete(0);
+  end;
+  FByKey.AddObject(Key, Icon);
+  FOrder.Add(Key);
+end;
+
+procedure TIconCache.Clear;
+begin
+  FByKey.Clear;
+  FOrder.Clear;
+end;
+
 var
   { Path -> TBitmap (owned), nil object when the lookup failed. }
   IconCache: TStringList;
+  { FileIcon.swift: per path (4000) and per extension (512). }
+  FileIconCache: TIconCache;
+  TypeIconCache: TIconCache;
+  FolderIcon: TBitmap;
 
 procedure DrawPlaceholder(ACanvas: TCanvas; const Bounds: TRect);
 begin
@@ -170,6 +253,37 @@ begin
   Result := NSImageToBitmap(Image, Px, False, clNone);
 end;
 
+{ NSWorkspace iconForFileType: — accepts an extension or a UTI such as
+  'public.folder' (FileIcon.swift: icon(for: .folder), icon(for: type)). }
+function LoadTypeIcon(const TypeName: string; Px: Integer): TBitmap;
+var
+  Workspace, TypeStr, Image: Pointer;
+begin
+  Result := nil;
+  Workspace := TMsgObj(@objc_msgSend)(objc_getClass('NSWorkspace'),
+    sel_registerName('sharedWorkspace'));
+  if Workspace = nil then Exit;
+  TypeStr := CFStr(TypeName);
+  if TypeStr = nil then Exit;
+  try
+    Image := TMsgObjArg(@objc_msgSend)(Workspace,
+      sel_registerName('iconForFileType:'), TypeStr);
+  finally
+    CFRelease(TypeStr);
+  end;
+  Result := NSImageToBitmap(Image, Px, False, clNone);
+end;
+
+{ FileIcon.typeIcon: lower-cased extension, '.data' type when none. }
+function ExtensionTypeName(const Path: string): string;
+begin
+  Result := LowerCase(ExtractFileExt(Path));
+  if Result = '' then
+    Result := 'public.data'
+  else
+    Delete(Result, 1, 1);
+end;
+
 function SystemSymbolBitmap(const Name: string; Px: Integer; Color: TColor): TBitmap;
 var
   NameStr, Image: Pointer;
@@ -216,17 +330,73 @@ begin
   ACanvas.StretchDraw(Bounds, Icon);
 end;
 
+procedure DrawFileIcon(ACanvas: TCanvas; const Bounds: TRect; const Path: string;
+  IsDirectory: Boolean);
+var
+  Ext: string;
+  Icon: TBitmap;
+  Px: Integer;
+begin
+  Icon := nil;
+  Px := 2 * (Bounds.Right - Bounds.Left);
+  {$IFDEF DARWIN}
+  if IsDirectory then
+  begin
+    if FolderIcon = nil then
+      FolderIcon := LoadTypeIcon('public.folder', Px);
+    Icon := FolderIcon;
+  end
+  else if not FileIconCache.Find(Path, Icon) then
+  begin
+    { FileIcon.icon(for:) — NSWorkspace icon for the path itself. }
+    Icon := LoadIcon(Path, Px);
+    if Icon <> nil then
+      FileIconCache.Put(Path, Icon)
+    else
+    begin
+      { FileIcon.typeIcon: by extension, cached separately. }
+      Ext := ExtensionTypeName(Path);
+      if not TypeIconCache.Find(Ext, Icon) then
+      begin
+        Icon := LoadTypeIcon(Ext, Px);
+        if Icon <> nil then
+          TypeIconCache.Put(Ext, Icon);
+      end;
+    end;
+  end;
+  {$ENDIF}
+  if Icon = nil then
+  begin
+    DrawPlaceholder(ACanvas, Bounds);
+    Exit;
+  end;
+  ACanvas.StretchDraw(Bounds, Icon);
+end;
+
 procedure ClearVolumeIconCache;
 begin
   IconCache.Clear;
+end;
+
+procedure ClearFileIconCache;
+begin
+  FileIconCache.Clear;
+  TypeIconCache.Clear;
+  FreeAndNil(FolderIcon);
 end;
 
 initialization
   IconCache := TStringList.Create;
   IconCache.OwnsObjects := True;
   IconCache.Sorted := True;
+  FileIconCache := TIconCache.Create(4000);
+  TypeIconCache := TIconCache.Create(512);
+  FolderIcon := nil;
 
 finalization
   IconCache.Free;
+  FileIconCache.Free;
+  TypeIconCache.Free;
+  FolderIcon.Free;
 
 end.
