@@ -78,6 +78,15 @@ begin
   end;
 end;
 
+{ ScanEngine.swift traverse: a whole volume gets more workers. }
+function WorkersFor(const Path: string): Integer;
+begin
+  if IsVolumeRoot(Path) then
+    Result := VolumeWorkerCount
+  else
+    Result := SubtreeWorkerCount;
+end;
+
 threadvar
   { Progress across several ScanPath calls: totals of the finished ones,
     and the caller's callback. }
@@ -111,7 +120,7 @@ begin
   LastBytes := 0;
   LastItems := 0;
   Result := ScanPath('/', @CombinedProgress, SubtreeAllowedDevices('/'),
-    IsCancelled, Unreadable);
+    IsCancelled, Unreadable, WorkersFor('/'));
   for I := 0 to High(Names) do
   begin
     if Assigned(IsCancelled) and IsCancelled() then
@@ -122,7 +131,8 @@ begin
     LastItems := 0;
     Mount := SystemVolumesDirectory + '/' + Names[I];
     Count := 0;
-    Sibling := ScanPath(Mount, @CombinedProgress, nil, IsCancelled, @Count);
+    Sibling := ScanPath(Mount, @CombinedProgress, nil, IsCancelled, @Count,
+      WorkersFor(Mount));
     try
       if Unreadable <> nil then
         Inc(Unreadable^, Count);
@@ -149,7 +159,7 @@ begin
     Exit(ScanBootVolumeGroup(Progress, IsCancelled, Unreadable));
   ScanRoot := ResolveDataVolumeAlias(Path);
   Result := ScanPath(ScanRoot, Progress, SubtreeAllowedDevices(ScanRoot),
-    IsCancelled, Unreadable);
+    IsCancelled, Unreadable, WorkersFor(ScanRoot));
   Result.SetRootName(Path);
 end;
 

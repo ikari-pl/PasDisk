@@ -11,7 +11,7 @@ unit FileTree;
 interface
 
 uses
-  SysUtils, Classes;
+  SysUtils, Classes, Math;
 
 type
   TNodeID = LongInt;
@@ -45,6 +45,8 @@ type
     var
       FNodes: array of TNode;
       FNames: array of string;
+      { Nodes in use; FNodes/FNames may be longer (spare capacity). }
+      FCount: Integer;
       FHardLinks: array of THardLink;
       FHardLinkIDs: array of TNodeID;
       FHardLinkCount: Integer;
@@ -133,6 +135,7 @@ begin
   inherited Create;
   SetLength(FNodes, 1);
   SetLength(FNames, 1);
+  FCount := 1;
   FNodes[0].Size := 0;
   FNodes[0].Parent := NoNode;
   FNodes[0].FirstChild := NoNode;
@@ -144,6 +147,7 @@ end;
 
 procedure TFileTree.ReserveCapacity(Count: Integer);
 begin
+  { Capacity only: the node count is unchanged. }
   if Length(FNodes) < Count then
   begin
     SetLength(FNodes, Count);
@@ -156,9 +160,13 @@ function TFileTree.AppendUnlinked(const Name: string; Size: Int64;
 var
   N: Integer;
 begin
-  N := Length(FNodes);
-  SetLength(FNodes, N + 1);
-  SetLength(FNames, N + 1);
+  N := FCount;
+  { Geometric growth: one-element steps cost a full copy per node when
+    the allocator cannot extend the block in place (another thread's
+    heap during a parallel scan). }
+  if N = Length(FNodes) then
+    ReserveCapacity(Max(16, 2 * N));
+  Inc(FCount);
   FNodes[N].Size := Size;
   FNodes[N].Parent := NoNode;
   FNodes[N].FirstChild := NoNode;
@@ -247,10 +255,10 @@ var
   Top: Integer;
   Current, Child: TNodeID;
 begin
-  SetLength(Result, Length(FNodes));
-  if Length(FNodes) = 0 then
+  SetLength(Result, FCount);
+  if FCount = 0 then
     Exit;
-  SetLength(Stack, Length(FNodes));
+  SetLength(Stack, FCount);
   Result[RootID] := True;
   Stack[0] := RootID;
   Top := 0;
@@ -279,7 +287,7 @@ var
 begin
   Dest.Clear;
   Reachable := ReachabilityBitmap;
-  for I := 0 to High(FNodes) do
+  for I := 0 to (FCount - 1) do
   begin
     if (not Reachable[I]) or FNodes[I].IsDirectory then
       Continue;
@@ -429,7 +437,7 @@ procedure TFileTree.ResetDirectorySizes;
 var
   I: Integer;
 begin
-  for I := 0 to High(FNodes) do
+  for I := 0 to (FCount - 1) do
     if FNodes[I].IsDirectory then
       FNodes[I].Size := 0;
 end;
@@ -443,7 +451,7 @@ var
   StackTop, OrderLen: Integer;
   Current, Child, Parent: TNodeID;
 begin
-  Count := Length(FNodes);
+  Count := FCount;
   SetLength(Visited, Count);
   SetLength(Order, Count);
   SetLength(Stack, Count);
@@ -484,7 +492,7 @@ end;
 
 function TFileTree.NodeCount: Integer;
 begin
-  Result := Length(FNodes);
+  Result := FCount;
 end;
 
 function TFileTree.NameOf(ID: TNodeID): string;
@@ -513,7 +521,7 @@ var
   Remaining: Integer;
 begin
   Result := 0;
-  Remaining := Length(FNodes);
+  Remaining := FCount;
   Current := FNodes[ID].FirstChild;
   while (Current <> NoNode) and (Remaining > 0) do
   begin
@@ -528,7 +536,7 @@ var
   Current: TNodeID;
   Remaining: Integer;
 begin
-  Remaining := Length(FNodes);
+  Remaining := FCount;
   Current := FNodes[ID].FirstChild;
   while (Current <> NoNode) and (Remaining > 0) do
   begin
@@ -551,7 +559,7 @@ begin
     Exit(FNames[0]);
   Parts := TStringList.Create;
   try
-    Remaining := Length(FNodes);
+    Remaining := FCount;
     Current := ID;
     while (Current <> RootID) and (Current <> NoNode) and (Remaining > 0) do
     begin
@@ -612,7 +620,7 @@ var
   Remaining: Integer;
 begin
   Dest.Clear;
-  Remaining := Length(FNodes);
+  Remaining := FCount;
   Current := FNodes[ID].FirstChild;
   while (Current <> NoNode) and (Remaining > 0) do
   begin
@@ -734,8 +742,8 @@ begin
   if FHardLinkCount = 0 then
     Exit;
 
-  SetLength(Reachable, Length(FNodes));
-  SetLength(Stack, Length(FNodes));
+  SetLength(Reachable, FCount);
+  SetLength(Stack, FCount);
   Reachable[RootID] := True;
   Stack[0] := RootID;
   StackTop := 0;
@@ -839,7 +847,7 @@ begin
   Dest.Clear;
   Temp := TFPList.Create;
   try
-    Remaining := Length(FNodes);
+    Remaining := FCount;
     Current := FNodes[ID].FirstChild;
     while (Current <> NoNode) and (Remaining > 0) do
     begin
@@ -889,7 +897,7 @@ var
   Flag: Byte;
   NameBytes: RawByteString;
 begin
-  Count := Length(FNodes);
+  Count := FCount;
   WriteU32(Stream, FileTreeSerializationMagic);
   WriteU32(Stream, LongWord(Count));
   for I := 0 to Count - 1 do
@@ -994,6 +1002,7 @@ begin
   Result := TFileTree.Create('');
   SetLength(Result.FNodes, Count);
   SetLength(Result.FNames, Count);
+  Result.FCount := Count;
 
   for I := 0 to Count - 1 do
     Result.FNodes[I].Size := ReadI64(Stream);

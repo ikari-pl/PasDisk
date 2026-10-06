@@ -7,7 +7,7 @@ program test_traversal;
 {$mode objfpc}{$H+}
 
 uses
-  {$IFDEF UNIX}BaseUnix,{$ENDIF}
+  {$IFDEF UNIX}cthreads, BaseUnix,{$ENDIF}
   SysUtils, Classes, FileTree, Traversal, PlatformFS, DirTypes, PlatformDirReader, PlatformVolumes;
 
 var
@@ -157,6 +157,122 @@ begin
     'a non-root scan allows only its own device');
 end;
 
+var
+  CallerThread: TThreadID;
+  OffThreadCalls: Integer;
+  ProgressCalls: Integer;
+
+procedure CheckThreadProgress(BytesScanned: Int64; ItemsScanned: Integer);
+begin
+  Inc(ProgressCalls);
+  if GetCurrentThreadId <> CallerThread then
+    Inc(OffThreadCalls);
+end;
+
+function CheckThreadCancelled: Boolean;
+begin
+  if GetCurrentThreadId <> CallerThread then
+    Inc(OffThreadCalls);
+  Result := False;
+end;
+
+function CancelAtOnce: Boolean;
+begin
+  Result := True;
+end;
+
+{ Every path with its size, plus totals. Which hard link carries the size
+  depends on the visiting order (as in Swift), so hard-linked files and
+  the folders holding them are compared by path only. }
+function HoldsHardLink(T: TFileTree; Dir: TNodeID): Boolean;
+var
+  I: Integer;
+  P: TNodeID;
+  Key: THardLinkKey;
+  Alloc: Int64;
+begin
+  for I := 1 to T.NodeCount - 1 do
+    if T.HardLinkOf(I, Key, Alloc) then
+    begin
+      P := T.ParentOf(I);
+      while P <> NoNode do
+      begin
+        if P = Dir then
+          Exit(True);
+        P := T.ParentOf(P);
+      end;
+    end;
+  Result := False;
+end;
+
+function Fingerprint(T: TFileTree): string;
+var
+  L: TStringList;
+  I: Integer;
+  Key: THardLinkKey;
+  Alloc: Int64;
+begin
+  L := TStringList.Create;
+  try
+    for I := 1 to T.NodeCount - 1 do
+      if T.HardLinkOf(I, Key, Alloc) or (T.IsDirectory(I) and HoldsHardLink(T, I)) then
+        L.Add(T.PathOf(I) + ' link')
+      else
+        L.Add(T.PathOf(I) + ' ' + IntToStr(T.SizeOf(I)));
+    L.Sort;
+    Result := Format('%d nodes, %d bytes|', [T.NodeCount, T.SizeOf(RootID)]) + L.Text;
+  finally
+    L.Free;
+  end;
+end;
+
+{ TraversalScanner.swift: several workers build the same tree. }
+procedure TestParallel;
+var
+  Base, D: string;
+  I, J, Count: Integer;
+  Seq, Par: TFileTree;
+begin
+  Base := Root + '/parallel';
+  for I := 1 to 12 do
+  begin
+    D := Format('%s/d%d', [Base, I]);
+    for J := 1 to I do
+      D := D + '/n';
+    ForceDirectories(D);
+    for J := 1 to 20 do
+      WriteBytes(Format('%s/f%d', [D, J]), 100 * J + I);
+  end;
+  {$IFDEF UNIX}
+  WriteBytes(Base + '/d1/hard-a', 50000);
+  fpLink(PChar(Base + '/d1/hard-a'), PChar(Base + '/d7/hard-b'));
+  {$ENDIF}
+  Seq := ScanPath(Base);
+  CallerThread := GetCurrentThreadId;
+  OffThreadCalls := 0;
+  ProgressCalls := 0;
+  Par := ScanPath(Base, @CheckThreadProgress, nil, @CheckThreadCancelled, @Count, 4);
+  try
+    Expect(Fingerprint(Par) = Fingerprint(Seq), 'parallel scan builds the same tree as one worker');
+    Expect(Par.SizeOf(RootID) = Seq.SizeOf(RootID),
+      Format('hard link counted once in parallel too (%d = %d)', [Par.SizeOf(RootID), Seq.SizeOf(RootID)]));
+    Expect(Count = 0, 'no unreadable folders');
+    Expect(ProgressCalls > 0, 'progress is reported');
+    Expect(OffThreadCalls = 0, 'progress and cancellation run on the calling thread only');
+  finally
+    Seq.Free;
+    Par.Free;
+  end;
+  Par := ScanPath(Base, nil, nil, @CancelAtOnce, nil, 4);
+  try
+    Expect(Par.NodeCount < 300, Format('cancelled parallel scan stops early (%d nodes)', [Par.NodeCount]));
+  finally
+    Par.Free;
+  end;
+  Expect((SubtreeWorkerCount >= 3) and (SubtreeWorkerCount <= 5) and
+    (VolumeWorkerCount >= 4) and (VolumeWorkerCount <= 8), 'worker counts within Swift bounds');
+end;
+
 { ScanMetrics.swift unreadableDirectories: folders that cannot be listed,
   the root included. }
 procedure TestUnreadable;
@@ -237,6 +353,7 @@ begin
       T.Free;
     end;
     TestUnreadable;
+    TestParallel;
   finally
     Cleanup(Root);
   end;
