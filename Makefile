@@ -64,7 +64,7 @@ test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 		tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
 		tests/test_traversal tests/test_volumeroot tests/test_texttrim \
-		tests/test_formatters tests/test_search
+		tests/test_formatters tests/test_search tests/test_remove
 	./tests/test_check_platform.sh
 	./tools/check-platform.sh
 	./tests/test_filetree
@@ -81,6 +81,7 @@ test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 	./tests/test_texttrim
 	./tests/test_formatters
 	./tests/test_search
+	./tests/test_remove
 
 tests/test_filetree: tests/test_filetree.pas $(UNITDIR)/FileTree.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_filetree tests/test_filetree.pas
@@ -144,11 +145,14 @@ tests/test_search: tests/test_search.pas $(UNITDIR)/SearchIndex.pas \
 		$(UNITDIR)/PlatformTextFold.pas $(UNITDIR)/FileTree.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_search tests/test_search.pas
 
+tests/test_remove: tests/test_remove.pas $(UNITDIR)/PlatformRemove.pas
+	$(FPC) $(BUILDFLAGS) -otests/test_remove tests/test_remove.pas
+
 clean:
 	rm -f opendisk opendisk-gui tests/test_filetree tests/test_dirreader \
 		tests/test_scancache tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
 		tests/test_traversal tests/test_volumeroot tests/test_texttrim \
-		tests/test_formatters tests/test_search *.o *.ppu $(UNITDIR)/*.o $(UNITDIR)/*.ppu \
+		tests/test_formatters tests/test_search tests/test_remove *.o *.ppu $(UNITDIR)/*.o $(UNITDIR)/*.ppu \
 		tests/*.o tests/*.ppu link*.res linkfiles*.res ppas.sh
 	rm -rf src/gui/lib $(APP)
