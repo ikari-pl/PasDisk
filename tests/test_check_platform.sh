@@ -17,7 +17,7 @@ setup() {
 }
 
 expect() { # expect <ok|fail> <name>
-  if CHECK_PLATFORM_ROOT="$T" CHECK_PLATFORM_BASELINE="" "$CHECK" >/dev/null 2>&1; then got=ok; else got=fail; fi
+  if CHECK_PLATFORM_ROOT="$T" "$CHECK" >/dev/null 2>&1; then got=ok; else got=fail; fi
   if [[ "$got" == "$1" ]]; then echo "ok: $2"; else echo "FAIL: $2 (expected $1, got $got)"; fail=1; fi
 }
 
@@ -34,5 +34,10 @@ setup; printf '{$IFDEF UNIX}\n{$ENDIF}\n' > "$T/src/units/x.inc"; expect fail 'n
 setup; printf '{$I clean_darwin.inc}\n' >> "$T/src/units/Clean.pas"; expect fail 'per-OS include outside Platform*'
 setup; printf '{ talks to external volumes }\n' >> "$T/src/units/Clean.pas"; expect ok 'the word "external" in a comment is allowed'
 setup; printf '{$IFDEF UNIX}\n{$ENDIF}\n' > "$T/src/units/platformy_unix.inc"; expect ok 'Platform* .inc file is allowed'
+setup; printf 'program PlatformFoo;\n{$IFDEF DARWIN}\n{$ENDIF}\nbegin\nend.\n' > "$T/src/PlatformFoo.lpr"; expect fail 'a program named Platform* is not exempt'
+setup; printf 'program PlatformGui;\n{$IFDEF DARWIN}\n{$ENDIF}\nbegin\nend.\n' > "$T/src/gui/PlatformGui.lpr"; expect fail 'a GUI program named Platform* is not exempt'
+# No exemptions: units that used to be on the migration baseline fail too.
+setup; printf 'unit DirReader;\n{$IFDEF DARWIN}\n{$ENDIF}\nend.\n' > "$T/src/units/DirReader.pas"; expect fail 'former baseline unit gets no exemption'
+setup; printf 'program opendisk;\nuses\n  {$IFDEF UNIX}\n  cthreads, Unix,\n  {$ENDIF}\n  SysUtils;\nbegin\nend.\n' > "$T/src/opendisk.lpr"; expect fail 'cthreads guard that also pulls in another unit is not exempt'
 
 exit $fail
