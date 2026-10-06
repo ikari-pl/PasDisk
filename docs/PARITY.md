@@ -136,7 +136,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | gui/uMainForm.pas list selection/context menu | N/A | Done | od-31j.18.16 | Native table selection since 39b1d2f (the hand-rolled Shift/Cmd handling of 1fbc7ac toggled Cmd-clicks back); fa5f1c2 adds Add N Selected. |
 | Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | gui/uMainForm.pas; units/PlatformShell.pas | N/A | Partial | od-31j.50 | fa5f1c2 adds Add, Add Selected, Show in Finder, and Copy Path. Quick Look and menu icons remain open. |
 | Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | — | N/A | Missing | — | Still open; not implied by the context menu. |
-| Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | gui/PlatformFileDrag.pas | N/A | Partial | od-31j.18.6 | Rows and segments export file URLs, copy or move outside the app (87e2000; checked by hand). The refresh after a move (filesMovedNotification) is not ported. |
+| Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | gui/PlatformFileDrag.pas; gui/uMainForm.pas (FileDragEnded) | N/A | Done | od-31j.18.6 | Rows and segments export file URLs, copy or move outside the app (87e2000; checked by hand); when a dragged file is gone after the drop, the view refreshes (filesMovedNotification). |
 | Display limits: 100 children below the root, hide < 1 KiB | DiskAnalyzer.swift:7-8, 344-368 | gui/uMainForm.pas:717-729 (shows every child > 0 bytes) | N/A | Done | od-31j.48 | a5de8ce. |
 | Skeleton listing before the first results | DiskAnalyzer.swift:89-96, 370-417 | — | N/A | Missing | — | |
 | Scanning placeholder ("Preparing scan…") | DiskAnalysisView.swift:80-83 | gui/uMainForm.pas:600 (crumb text) | N/A | Partial | od-31j.18.4 | |
@@ -206,7 +206,7 @@ GUI:
 14. ~~Staging directories from the GUI (§5).~~ — context menu (fa5f1c2), drag-in (87e2000), Purgeable Space (5b55ea4).
 15. Row and segment context menus: Add to Collector, Quick Look, Show in Finder, Copy Path (§6, §7). Row menu is partial: Quick Look and menu icons remain open.
 16. Quick Look (§7).
-17. Refresh after rows are moved out to Finder (§7). Dragging out (87e2000) and collector drag-out are done.
+17. ~~Drag rows out to Finder, with refresh on move (§7).~~ — 87e2000 and the move refresh.
 18. ~~Display limits: top 100 below the root, hide < 1 KiB (§7).~~ — fixed (od-31j.48).
 19. Skeleton listing before results (§7).
 20. Navigating to an unscanned path triggers a scan (§7).
@@ -231,10 +231,10 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 73 |
-| Partial | 3 | 13 |
+| Done | 41 | 74 |
+| Partial | 3 | 12 |
 | Missing | 1 | 8 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 
-Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. Open: Quick Look, collector row actions, menu icons, the segment context menu and the refresh after a move to Finder.
+Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. Open: Quick Look, collector row actions, menu icons, the segment context menu and the Finder drags.

@@ -1976,15 +1976,28 @@ begin
     FileDragEnded(Point(0, 0), False);
 end;
 
-{ onEnd: flagDraggedProtected(nil). }
+{ onEnd: flagDraggedProtected(nil). FileDragSource.filesMovedNotification:
+  another app took the drop and a dragged file is gone (moved), so the
+  view refreshes. }
 procedure TMainForm.FileDragEnded(const ScreenPt: TPoint; Accepted: Boolean);
+var
+  I: Integer;
+  Moved: Boolean;
 begin
+  Moved := False;
+  if Accepted then
+    for I := 0 to High(FDragFiles) do
+      if (Copy(FDragFiles[I].Path, 1, 2) <> '::') and
+        not FileExists(FDragFiles[I].Path) and not DirectoryExists(FDragFiles[I].Path) then
+        Moved := True;
   FChart.DragFinished;
   FDragFiles := nil;
   FDropTargeted := False;
   FRejectTimer.Enabled := False;
   FDragReject := '';
   UpdateBarPhase;
+  if Moved then
+    RefreshClick(nil);
 end;
 
 { CollectedRow / footer fileDrag(exportsFileURLs: false): beginDragOut. }
