@@ -107,6 +107,9 @@ type
     FChart: TRingsChart;
     { CollectorBar.swift at the bottom of the chart column (od-31j.18.6). }
     FCollectorBar: TCollectorBarView;
+    { FolderRowView / FileActionsMenu context menu (PARITY gaps 14-15). }
+    FRowMenu: TPopupMenu;
+    FMenuRow: Integer;
     { CollectorBar deleting / done phases (od-31j.46). }
     FDeleteJob: TDeleteJob;
     FDeletePoll: TTimer;
@@ -180,6 +183,14 @@ type
     procedure RefreshClick(Sender: TObject);
     procedure DeleteClick(Sender: TObject);
     procedure CollectorRemove(Sender: TObject; const Path: string);
+    function RowItem(Index: Integer; out Item: TFolderItem): Boolean;
+    procedure StageItems(const Items: array of TFolderItem);
+    procedure ListContextPopup(Sender: TObject; MousePos: TPoint; var Handled: Boolean);
+    procedure MenuAddClick(Sender: TObject);
+    procedure MenuAddSelectedClick(Sender: TObject);
+    procedure MenuShowInFinderClick(Sender: TObject);
+    procedure MenuCopyPathClick(Sender: TObject);
+    procedure MenuHookTick(Sender: TObject);
     procedure DeletePollTick(Sender: TObject);
     procedure DoneTimerTick(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
@@ -215,7 +226,7 @@ var
 implementation
 
 uses
-  LCLType, LCLIntf, PlatformFS, PlatformLocale, PlatformImages, PlatformFullDiskAccess,
+  LCLType, LCLIntf, Clipbrd, PlatformFS, PlatformLocale, PlatformImages, PlatformFullDiskAccess,
   PlatformShell;
 
 const
@@ -621,6 +632,8 @@ begin
   FList.OnMouseDown := @ListMouseDown;
   FList.OnKeyDown := @ListKeyDown;
   FList.OnDblClick := @ListDblClick;
+  FList.OnContextPopup := @ListContextPopup;
+  FRowMenu := TPopupMenu.Create(Self);
 
   { SearchResultsView empty states, over the list only. }
   FSearchEmpty := TEmptyStateView.Create(Self);
@@ -1292,6 +1305,14 @@ begin
       RefreshList;
     end;
     FCollectorBar.SetListVisible(GetEnvironmentVariable('OPENDISK_GUI_COLLECTOR_LIST') = '1');
+    { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
+    if GetEnvironmentVariable('OPENDISK_GUI_MENU') <> '' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 800;
+        OnTimer := @MenuHookTick;
+        Enabled := True;
+      end;
     { Automation: OPENDISK_GUI_SEARCH=<query> types into the search field. }
     if GetEnvironmentVariable('OPENDISK_GUI_SEARCH') <> '' then
       FSearchEdit.Text := GetEnvironmentVariable('OPENDISK_GUI_SEARCH');
@@ -1810,6 +1831,142 @@ begin
   { Deleting and done phases own the footer until they end. }
   if (FDeleteJob = nil) and not FDoneTimer.Enabled then
     FCollectorBar.SetPhase(cbIdle);
+end;
+
+{ The real item behind a list row (folder node or search result); False
+  for synthetic rows. }
+function TMainForm.RowItem(Index: Integer; out Item: TFolderItem): Boolean;
+var
+  ID: TNodeID;
+begin
+  Result := False;
+  if (Index < 0) or (Index >= FList.Items.Count) then
+    Exit;
+  ID := TNodeID(PtrUInt(FList.Items.Objects[Index]));
+  if ID <= SearchRowBase then
+    Item := FSearchItems[SearchRowBase - ID]
+  else if (ID >= 0) and (FTree <> nil) then
+  begin
+    Item.Name := FTree.NameOf(ID);
+    Item.Path := FTree.PathOf(ID);
+    Item.Size := FTree.SizeOf(ID);
+    Item.IsDirectory := FTree.IsDirectory(ID);
+    Item.ItemCount := 0;
+  end
+  else
+    Exit;
+  Result := True;
+end;
+
+{ collector.add(files): protected paths are refused with a notice. }
+procedure TMainForm.StageItems(const Items: array of TFolderItem);
+var
+  I: Integer;
+begin
+  for I := 0 to High(Items) do
+    if not FCollector.Add(Items[I].Path, Items[I].Name, Items[I].Size,
+      Items[I].IsDirectory) and (FCollector.BlockedNotice <> '') then
+      FCollectorBar.ShowNotice(FCollector.BlockedNotice);
+  RefreshCollector;
+  RefreshList;
+end;
+
+{ FolderRowView.menuContent: Add to Collector (off for protected paths),
+  Add N Selected when the row is part of a multi-selection, Show in
+  Finder, Copy Path; nothing for synthetic rows. }
+procedure TMainForm.ListContextPopup(Sender: TObject; MousePos: TPoint;
+  var Handled: Boolean);
+var
+  Item: TFolderItem;
+  M: TMenuItem;
+  Selected: Integer;
+begin
+  Handled := True;
+  FMenuRow := FList.ItemAtPos(MousePos, True);
+  if not RowItem(FMenuRow, Item) then
+    Exit;
+  FRowMenu.Items.Clear;
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := 'Add to Collector';
+  M.Enabled := not IsProtectedPath(Item.Path);
+  M.OnClick := @MenuAddClick;
+  FRowMenu.Items.Add(M);
+  Selected := FList.SelCount;
+  if FList.Selected[FMenuRow] and (Selected > 1) then
+  begin
+    M := TMenuItem.Create(FRowMenu);
+    M.Caption := Format('Add %d Selected to Collector', [Selected]);
+    M.OnClick := @MenuAddSelectedClick;
+    FRowMenu.Items.Add(M);
+  end;
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := '-';
+  FRowMenu.Items.Add(M);
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := 'Show in Finder';
+  M.OnClick := @MenuShowInFinderClick;
+  FRowMenu.Items.Add(M);
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := 'Copy Path';
+  M.OnClick := @MenuCopyPathClick;
+  FRowMenu.Items.Add(M);
+  with FList.ClientToScreen(MousePos) do
+    FRowMenu.PopUp(X, Y);
+end;
+
+procedure TMainForm.MenuHookTick(Sender: TObject);
+var
+  Row: Integer;
+  Handled: Boolean;
+  R: TRect;
+begin
+  (Sender as TTimer).Enabled := False;
+  Row := StrToIntDef(GetEnvironmentVariable('OPENDISK_GUI_MENU'), -1);
+  if (Row < 0) or (Row >= FList.Items.Count) then
+    Exit;
+  R := FList.ItemRect(Row);
+  ListContextPopup(FList, Point(R.Left + 60, (R.Top + R.Bottom) div 2), Handled);
+end;
+
+procedure TMainForm.MenuAddClick(Sender: TObject);
+var
+  Item: TFolderItem;
+begin
+  if RowItem(FMenuRow, Item) then
+    StageItems([Item]);
+end;
+
+procedure TMainForm.MenuAddSelectedClick(Sender: TObject);
+var
+  Items: array of TFolderItem;
+  Item: TFolderItem;
+  I: Integer;
+begin
+  Items := nil;
+  for I := 0 to FList.Items.Count - 1 do
+    { The protected ones are left out, as Swift filters them. }
+    if FList.Selected[I] and RowItem(I, Item) and not IsProtectedPath(Item.Path) then
+    begin
+      SetLength(Items, Length(Items) + 1);
+      Items[High(Items)] := Item;
+    end;
+  StageItems(Items);
+end;
+
+procedure TMainForm.MenuShowInFinderClick(Sender: TObject);
+var
+  Item: TFolderItem;
+begin
+  if RowItem(FMenuRow, Item) then
+    RevealInFileManager(Item.Path);
+end;
+
+procedure TMainForm.MenuCopyPathClick(Sender: TObject);
+var
+  Item: TFolderItem;
+begin
+  if RowItem(FMenuRow, Item) then
+    Clipboard.AsText := Item.Path;
 end;
 
 procedure TMainForm.CollectorRemove(Sender: TObject; const Path: string);

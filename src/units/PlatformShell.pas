@@ -13,6 +13,9 @@ function OpenDocument(const Path: string): Boolean;
 { Opens a URL (e.g. x-apple.systempreferences:) with its handler. }
 function OpenURL(const URL: string): Boolean;
 
+{ Shows Path selected in the file manager (Finder: activateFileViewerSelecting). }
+function RevealInFileManager(const Path: string): Boolean;
+
 { Starts a new instance of this application (the .app bundle when running
   from one, else the executable). The caller then quits. }
 function LaunchNewInstance: Boolean;
@@ -47,6 +50,15 @@ function OpenURL(const URL: string): Boolean;
 begin
   {$IFDEF DARWIN}
   Result := RunOpen([URL]);
+  {$ELSE}
+  Result := False;
+  {$ENDIF}
+end;
+
+function RevealInFileManager(const Path: string): Boolean;
+begin
+  {$IFDEF DARWIN}
+  Result := RunOpen(['-R', Path]);
   {$ELSE}
   Result := False;
   {$ENDIF}
