@@ -47,10 +47,8 @@ procedure ScanCacheSetDirectory(const Dir: string);
 
 implementation
 
-{$IFDEF UNIX}
 uses
-  BaseUnix;
-{$ENDIF}
+  PlatformFS;
 
 const
   FormatVersion: LongWord = 3;
@@ -86,12 +84,8 @@ function CacheDirectory: string;
 begin
   if DirectoryOverride <> '' then
     Exit(ExcludeTrailingPathDelimiter(DirectoryOverride));
-  {$IFDEF DARWIN}
-  Result := IncludeTrailingPathDelimiter(GetUserDir) +
-    'Library/Caches/opendisk/ScanCache';
-  {$ELSE}
-  Result := IncludeTrailingPathDelimiter(GetAppConfigDir(False)) + 'ScanCache';
-  {$ENDIF}
+  Result := IncludeTrailingPathDelimiter(AppCacheDirectory('opendisk')) +
+    'ScanCache';
 end;
 
 function ScanCacheFilePath(const RootPath: string): string;
@@ -130,31 +124,6 @@ begin
   Stream.ReadBuffer(Result, SizeOf(Result));
 end;
 
-{ Modification time (Unix seconds) and size; False if the entry vanished. }
-function CacheFileInfo(const Path: string; out Modified: Double;
-  out Size: Int64): Boolean;
-{$IFDEF UNIX}
-var
-  Info: BaseUnix.Stat;
-begin
-  Result := fpStat(Path, Info) = 0;
-  if not Result then
-    Exit;
-  Modified := Double(Info.st_mtime) + Double(Info.st_mtimensec) / Double(1e9);
-  Size := Info.st_size;
-end;
-{$ELSE}
-var
-  Rec: TSearchRec;
-begin
-  Result := FindFirst(Path, faAnyFile, Rec) = 0;
-  if not Result then
-    Exit;
-  Modified := (Rec.TimeStamp - UnixDateDelta) * SecsPerDay;
-  Size := Rec.Size;
-  FindClose(Rec);
-end;
-{$ENDIF}
 
 type
   TCacheFile = record
@@ -175,11 +144,7 @@ var
   Size, Bytes: Int64;
 begin
   Base := IncludeTrailingPathDelimiter(Dir);
-  {$IFDEF UNIX}
-  Now := fpTime;
-  {$ELSE}
-  Now := (SysUtils.Now - UnixDateDelta) * SecsPerDay;
-  {$ENDIF}
+  Now := UnixTimeNow;
   Count := 0;
   SetLength(Caches, 0);
   if FindFirst(Base + '*', faAnyFile, Rec) <> 0 then
@@ -190,7 +155,7 @@ begin
         Continue;
       Path := Base + Rec.Name;
       { Swift defaults a missing date to .distantPast and size to 0. }
-      if not CacheFileInfo(Path, Modified, Size) then
+      if not FileModifiedAndSize(Path, Modified, Size) then
       begin
         Modified := -1e300;
         Size := 0;

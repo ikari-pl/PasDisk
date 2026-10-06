@@ -70,7 +70,8 @@ tests/test_dirreader: tests/test_dirreader.pas $(UNITDIR)/DirReader.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_dirreader tests/test_dirreader.pas
 
 tests/test_scancache: tests/test_scancache.pas $(UNITDIR)/FileTree.pas \
-		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas $(UNITDIR)/ScanCache.pas
+		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas $(UNITDIR)/ScanCache.pas \
+		$(UNITDIR)/PlatformFS.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_scancache tests/test_scancache.pas
 
 tests/test_incremental: tests/test_incremental.pas $(UNITDIR)/FileTree.pas \

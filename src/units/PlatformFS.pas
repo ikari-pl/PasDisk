@@ -41,6 +41,15 @@ function FileAllocatedSize(const Path: string; out Size: Int64): Boolean;
   precision (no local-time round trip). }
 function UnixTimeNow: Double;
 
+{ Modification time (Unix seconds UTC) and size of Path, following
+  symlinks. False when Path cannot be stat'ed. }
+function FileModifiedAndSize(const Path: string; out ModifiedUnix: Double;
+  out Size: Int64): Boolean;
+
+{ Per-user cache directory for AppName: ~/Library/Caches/<AppName> on
+  macOS, the application config directory elsewhere. }
+function AppCacheDirectory(const AppName: string): string;
+
 { Creates NewPath as a hard link to Existing (tests build hard-link
   fixtures with it). }
 function CreateHardLink(const Existing, NewPath: string): Boolean;
@@ -233,6 +242,45 @@ begin
 end;
 {$ENDIF}
 {$ENDIF}
+
+function FileModifiedAndSize(const Path: string; out ModifiedUnix: Double;
+  out Size: Int64): Boolean;
+{$IFDEF UNIX}
+var
+  Info: Stat;
+begin
+  ModifiedUnix := 0;
+  Size := 0;
+  Result := fpStat(PChar(Path), Info) = 0;
+  if not Result then
+    Exit;
+  ModifiedUnix := Double(Info.st_mtime) + Double(Info.st_mtimensec) / Double(1e9);
+  Size := Info.st_size;
+end;
+{$ELSE}
+var
+  Rec: TSearchRec;
+begin
+  ModifiedUnix := 0;
+  Size := 0;
+  Result := FindFirst(Path, faAnyFile, Rec) = 0;
+  if not Result then
+    Exit;
+  { TSearchRec.TimeStamp is local time. }
+  ModifiedUnix := (LocalTimeToUniversal(Rec.TimeStamp) - UnixDateDelta) * SecsPerDay;
+  Size := Rec.Size;
+  FindClose(Rec);
+end;
+{$ENDIF}
+
+function AppCacheDirectory(const AppName: string): string;
+begin
+  {$IFDEF DARWIN}
+  Result := IncludeTrailingPathDelimiter(GetUserDir) + 'Library/Caches/' + AppName;
+  {$ELSE}
+  Result := ExcludeTrailingPathDelimiter(GetAppConfigDir(False));
+  {$ENDIF}
+end;
 
 function CreateHardLink(const Existing, NewPath: string): Boolean;
 begin
