@@ -129,7 +129,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Toolbar: Unmount (Cmd-[, confirmation dialog), Refresh (Cmd-R) | DiskAnalysisView.swift:97-122, 189-195 | gui/PlatformToolbar.pas; gui/uMainForm.pas (SetUpToolbar, DisksClick, RefreshClick) | N/A | Done | od-31j.18.19 | Native unified NSToolbar: Unmount (eject, navigational, before the title), search (NSSearchToolbarItem), Refresh (arrow.clockwise); shown only while analysing. The LCL row is the fallback off macOS. |
 | Window title/subtitle (folder name / displayed size) | DiskAnalysisView.swift:94-95, 496-506 | gui/uMainForm.pas (ShowNode, UpdateSubtitle); gui/PlatformToolbar.pas (SetWindowSubtitle) | N/A | Done | od-31j.18.2 | The title follows the shown folder; the subtitle is the displayed total, none while zero. |
 | Back via the rings center / breadcrumb stack | DiskAnalysisView.swift:544-574 | gui/uMainForm.pas:772-773, 809-818 | N/A | Done | od-31j.11 | |
-| Navigating to an unscanned path triggers a scan of it | DiskAnalysisView.swift:569-574 | — | N/A | Missing | — | |
+| Navigating to an unscanned path triggers a scan of it | DiskAnalysisView.swift:569-574 | gui/uMainForm.pas (ShowContentsOf, NavigateToPath, BackClick, RefreshClick, StartScan KeepView) | N/A | Done | — | The view root (breadcrumbs) is kept apart from the scan root: Refresh in a subfolder rescans only it and keeps the trail; a breadcrumb, back step, chart click or search result outside the tree starts a scan of that folder; returning to a folder on the back stack truncates it. |
 | List/chart split 60/40, resizable, minimum widths | DiskAnalysisView.swift:51-67 | gui/uMainForm.pas (BodyResize, SplitterDrag); gui/ThinSplitter.pas | N/A | Done | od-31j.18.4 | List 60 % (min 320), chart 40 % (min 280), ratio kept on resize, 1-pt draggable divider; window 1100x720, min 900x600. LCL TSplitter is not used (the list stopped painting with it on Cocoa). |
 | Folder rows: file icon, name weight, "N items", size bar, size, chevron, hover/selection | Views/Components/FolderRowView.swift:47-121; Views/Analysis/ScanResultsView.swift | gui/uMainForm.pas ListDrawItem | N/A | Done | od-31j.18.3, od-31j.18.17 | Native path icons since 6975b1a. |
 | Sortable Name/Size column header | DiskAnalysisView.swift:216-228, 340-375 | gui/uMainForm.pas sort header and visible-list sorting | N/A | Done | od-31j.18.3 | 1fbc7ac adds active chevrons, Swift default directions, and sorting after collector filtering. |
@@ -231,9 +231,9 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 86 |
+| Done | 41 | 87 |
 | Partial | 3 | 3 |
-| Missing | 1 | 5 |
+| Missing | 1 | 4 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 

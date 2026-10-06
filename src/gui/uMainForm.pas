@@ -148,6 +148,11 @@ type
     FCurrentPath: string;
     FRootPath: string;
     FRootName: string;
+    { DiskAnalysisView rootPath / rootName: where the breadcrumbs start.
+      FRootPath is the analyzer's scan root, which a refresh or a scan of
+      a folder outside the tree moves while the view root stays. }
+    FViewRoot, FViewRootName: string;
+    FHookStage: Integer;
     FRootTotal: QWord;
     FRootFree: QWord;
     { DiskAnalysisView ScanStatusBar and the scan it describes. }
@@ -167,7 +172,12 @@ type
     procedure ShowAnalysis;
     procedure RefreshVolumes;
     procedure StyleChrome;
-    procedure StartScan(const APath, AName: string; Total, FreeBytes: QWord);
+    { KeepView: analyzer.scanDirectory within the same analysis — the view
+      root, breadcrumbs and collector stay. }
+    procedure StartScan(const APath, AName: string; Total, FreeBytes: QWord;
+      KeepView: Boolean = False);
+    function ShowContentsOf(const Path: string): Boolean;
+    procedure NavigateToPath(const Path: string);
      procedure OnPoll(Sender: TObject);
     { Stops a running scan (window close, Disks) without waiting for the
       walk to finish; its partial tree is discarded. }
@@ -956,10 +966,7 @@ begin
   else
     Destination := ExtractFileDir(FSearchItems[Index].Path);
   ClearSearch;
-  if FTree.NodeIDForPath(Destination, FRootPath) = NoNode then
-    Exit;
-  FBreadcrumbs.Add(FCurrentPath);
-  ShowNode(Destination);
+  NavigateToPath(Destination);
 end;
 
 { SearchResultsView: 'Searching…' while running with nothing yet,
@@ -1354,13 +1361,14 @@ begin
   end;
 end;
 
-procedure TMainForm.StartScan(const APath, AName: string; Total, FreeBytes: QWord);
+procedure TMainForm.StartScan(const APath, AName: string; Total, FreeBytes: QWord;
+  KeepView: Boolean);
 var
   Expanded: string;
   RootChanged: Boolean;
 begin
   Expanded := ResolvePath(APath);
-  RootChanged := Expanded <> FRootPath;
+  RootChanged := not KeepView and (Expanded <> FViewRoot);
   if (IncludeTrailingPathDelimiter(Expanded) = PathDelim) and
     (not FullDiskAccessGranted) then
   begin
@@ -1368,6 +1376,11 @@ begin
     FRootName := AName;
     FRootTotal := Total;
     FRootFree := FreeBytes;
+    if not KeepView then
+    begin
+      FViewRoot := Expanded;
+      FViewRootName := AName;
+    end;
     ShowAnalysis;
     FreeAndNil(FTree);
     FChart.Root := nil;
@@ -1402,7 +1415,12 @@ begin
   FRootTotal := Total;
   FRootFree := FreeBytes;
   FCurrentPath := Expanded;
-  FBreadcrumbs.Clear;
+  if not KeepView then
+  begin
+    FViewRoot := Expanded;
+    FViewRootName := FRootName;
+    FBreadcrumbs.Clear;
+  end;
   { Swift keeps the collector for the analysed root (failed deletions
     stay staged across the rescan); a different root starts afresh. }
   if RootChanged then
@@ -1420,8 +1438,12 @@ begin
   FAnalysisState.BringToFront;
   { ScanStatusBar belongs to the listing branch: none until rows exist. }
   FScanBar.Visible := False;
-  FCrumbBar.SetPath(Expanded, FRootName, Expanded);
-  Caption := FRootName;
+  FCrumbBar.SetPath(FViewRoot, FViewRootName, Expanded);
+  { windowTitle: the view root's name, else the folder's. }
+  if Expanded = FViewRoot then
+    Caption := FViewRootName
+  else
+    Caption := FRootName;
   FScanStart := Now;
   FScanBar.SetTotals(0, 0);
   UpdateSubtitle(0);
@@ -1606,7 +1628,8 @@ begin
       FSearchEdit.Text := GetEnvironmentVariable('OPENDISK_GUI_SEARCH');
     { Automation: OPENDISK_GUI_SHOW=<folder inside the scan> opens it. }
     ShowPath := GetEnvironmentVariable('OPENDISK_GUI_SHOW');
-    if ShowPath <> '' then
+    { Only for the first scan when a hook chain rescans. }
+    if (ShowPath <> '') and (FHookStage = 0) then
     begin
       { Relative values are inside the scan; absolute ones are used as is. }
       if Copy(ShowPath, 1, 2) = '::' then
@@ -1617,6 +1640,17 @@ begin
           ShowPath := IncludeTrailingPathDelimiter(FRootPath) + ShowPath;
         CrumbNavigate(ResolvePath(ShowPath));
       end;
+    end;
+    { Automation: OPENDISK_GUI_REFRESH_THEN=<path> refreshes once after the
+      first scan (and OPENDISK_GUI_SHOW), then navigates to <path> after the
+      refresh — a breadcrumb outside the refreshed tree. }
+    if GetEnvironmentVariable('OPENDISK_GUI_REFRESH_THEN') <> '' then
+    begin
+      Inc(FHookStage);
+      if FHookStage = 1 then
+        RefreshClick(nil)
+      else if FHookStage = 2 then
+        NavigateToPath(GetEnvironmentVariable('OPENDISK_GUI_REFRESH_THEN'));
     end;
   finally
     Thread.Free;
@@ -1693,7 +1727,7 @@ begin
     end;
     FChart.TakeRoot(TChartItem.BuildSynthetic(HiddenSpaceFolderName,
       HiddenSpaceSentinelPath, Leaves));
-    FCrumbBar.SetPath(FRootPath, FRootName, APath);
+    FCrumbBar.SetPath(FViewRoot, FViewRootName, APath);
     { windowTitle drops the '::'. }
     Caption := HiddenSpaceFolderName;
     RefreshList;
@@ -1708,11 +1742,13 @@ begin
     Exit;
   FCurrentPath := APath;
   NodeName := ExtractFileName(ExcludeTrailingPathDelimiter(APath));
-  if NodeName = '' then
+  if APath = FViewRoot then
+    NodeName := FViewRootName
+  else if NodeName = '' then
     NodeName := FRootName;
   Chart := TChartItem.Build(FTree, Node, NodeName, APath);
   FChart.TakeRoot(Chart);
-  FCrumbBar.SetPath(FRootPath, FRootName, APath);
+  FCrumbBar.SetPath(FViewRoot, FViewRootName, APath);
   { DiskAnalysisView.swift windowTitle: the folder being shown. }
   Caption := NodeName;
   RefreshList;
@@ -3117,15 +3153,63 @@ begin
   SetListHover(-1);
 end;
 
+{ DiskAnalysisView.showContents(of:): the tree's folder, the Purgeable
+  view, or — when the tree does not hold it and nothing is scanning — a
+  scan of that folder within this analysis. }
+function TMainForm.ShowContentsOf(const Path: string): Boolean;
+var
+  ScanName: string;
+begin
+  Result := False;
+  if FTree <> nil then
+  begin
+    if Path = HiddenSpaceSentinelPath then
+    begin
+      Result := Length(CleanableCacheEntriesOf(FTree, FRootPath)) > 0;
+      if Result then
+        ShowNode(Path);
+      Exit;
+    end;
+    if ResolveNode(FTree, FRootPath, Path) <> NoNode then
+    begin
+      ShowNode(Path);
+      Exit(True);
+    end;
+  end;
+  if (FScanThread <> nil) or (Copy(Path, 1, 2) = '::') or not DirectoryExists(Path) then
+    Exit;
+  if Path = FViewRoot then
+    ScanName := FViewRootName
+  else
+    ScanName := ExtractFileName(ExcludeTrailingPathDelimiter(Path));
+  StartScan(Path, ScanName, FRootTotal, FRootFree, True);
+  Result := True;
+end;
+
+{ DiskAnalysisView.navigateToPath: going to a folder already on the back
+  stack drops everything after it; otherwise the current one is pushed. }
+procedure TMainForm.NavigateToPath(const Path: string);
+var
+  FromPath: string;
+  Index: Integer;
+begin
+  if Path = FCurrentPath then
+    Exit;
+  FromPath := FCurrentPath;
+  if not ShowContentsOf(Path) then
+    Exit;
+  Index := FBreadcrumbs.IndexOf(Path);
+  if Index >= 0 then
+    while FBreadcrumbs.Count > Index do
+      FBreadcrumbs.Delete(FBreadcrumbs.Count - 1)
+  else
+    FBreadcrumbs.Add(FromPath);
+  FCurrentPath := Path;
+end;
+
 procedure TMainForm.CrumbNavigate(const Path: string);
 begin
-  if (FTree = nil) or (Path = FCurrentPath) then
-    Exit;
-  { Validate before touching the back stack: ShowNode ignores unknown paths. }
-  if ResolveNode(FTree, FRootPath, Path) = NoNode then
-    Exit;
-  FBreadcrumbs.Add(FCurrentPath);
-  ShowNode(Path);
+  NavigateToPath(Path);
 end;
 
 procedure TMainForm.ListDblClick(Sender: TObject);
@@ -3148,16 +3232,12 @@ begin
     Exit;
   if Child = PurgeableRowID then
   begin
-    FBreadcrumbs.Add(FCurrentPath);
-    ShowNode(HiddenSpaceSentinelPath);
+    NavigateToPath(HiddenSpaceSentinelPath);
     Exit;
   end;
   ChildPath := FTree.PathOf(Child);
   if FTree.IsDirectory(Child) then
-  begin
-    FBreadcrumbs.Add(FCurrentPath);
-    ShowNode(ChildPath);
-  end
+    NavigateToPath(ChildPath)
   else
   begin
     if not FCollector.Add(ChildPath, FTree.NameOf(Child), FTree.SizeOf(Child), False) and
@@ -3171,13 +3251,11 @@ end;
 procedure TMainForm.ChartSelect(Sender: TObject; const APath: string;
   IsCenter: Boolean);
 begin
+  { onSelectCenter: goBack; onSelectDirectory: navigateToPath. }
   if IsCenter then
     BackClick(nil)
-  else if DirectoryExists(APath) then
-  begin
-    FBreadcrumbs.Add(FCurrentPath);
-    ShowNode(APath);
-  end;
+  else
+    NavigateToPath(APath);
 end;
 
 procedure TMainForm.CancelScan;
@@ -3220,11 +3298,14 @@ procedure TMainForm.BackClick(Sender: TObject);
 var
   Prev: string;
 begin
+  { goBack: the previous folder must show (or start scanning) first. }
   if FBreadcrumbs.Count = 0 then
     Exit;
   Prev := FBreadcrumbs[FBreadcrumbs.Count - 1];
+  if not ShowContentsOf(Prev) then
+    Exit;
   FBreadcrumbs.Delete(FBreadcrumbs.Count - 1);
-  ShowNode(Prev);
+  FCurrentPath := Prev;
 end;
 
 { DiskAnalysisView.swift refresh(): a new scan rooted at the folder being
@@ -3235,13 +3316,15 @@ var
 begin
   if FCurrentPath = '' then
     Exit;
-  if (FCurrentPath = FRootPath) or (Copy(FCurrentPath, 1, 2) = '::') then
+  { refresh(): scanDirectory(currentPath, or rootPath for '::' views);
+    the view root and back stack stay. }
+  if (Copy(FCurrentPath, 1, 2) = '::') or (FCurrentPath = FViewRoot) then
   begin
-    StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+    StartScan(FViewRoot, FViewRootName, FRootTotal, FRootFree, True);
     Exit;
   end;
   ScanName := ExtractFileName(ExcludeTrailingPathDelimiter(FCurrentPath));
-  StartScan(FCurrentPath, ScanName, FRootTotal, FRootFree);
+  StartScan(FCurrentPath, ScanName, FRootTotal, FRootFree, True);
 end;
 
 procedure TMainForm.DeleteClick(Sender: TObject);
@@ -3289,7 +3372,9 @@ begin
   FCollectorBar.SetDoneResult(Freed, FCollector.Failures.Count);
   FDoneTimer.Enabled := True;
   RefreshCollector;
-  StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+  { CollectorBar onDeleted: back to the view root, rescanned. }
+  FBreadcrumbs.Clear;
+  StartScan(FViewRoot, FViewRootName, FRootTotal, FRootFree, True);
 end;
 
 procedure TMainForm.DoneTimerTick(Sender: TObject);
