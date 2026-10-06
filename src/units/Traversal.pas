@@ -13,11 +13,17 @@ uses
 
 type
   TScanProgress = procedure(BytesScanned: Int64; ItemsScanned: Integer);
+  { Polled once per directory; True stops the scan (TraversalScanner.swift
+    isCancelled). }
+  TScanCancelled = function: Boolean;
 
 { Scans Path without leaving AllowedDevices plus Path's own device
-  (TraversalScanner.swift: allowedDevices.union([rootDevice])). }
+  (TraversalScanner.swift: allowedDevices.union([rootDevice])). When
+  IsCancelled returns True the scan stops and the partial tree is returned;
+  callers discard it, as ScanEngine.swift does. }
 function ScanPath(const Path: string; Progress: TScanProgress = nil;
-  const AllowedDevices: TDeviceSet = nil): TFileTree;
+  const AllowedDevices: TDeviceSet = nil;
+  IsCancelled: TScanCancelled = nil): TFileTree;
 { Append a fresh scan of Path under ParentID (ParentID must already exist). }
 function ScanInto(Tree: TFileTree; ParentID: TNodeID; const Path: string;
   Progress: TScanProgress = nil; const AllowedDevices: TDeviceSet = nil): Boolean;
@@ -88,7 +94,8 @@ begin
 end;
 
 function ScanPath(const Path: string; Progress: TScanProgress;
-  const AllowedDevices: TDeviceSet): TFileTree;
+  const AllowedDevices: TDeviceSet;
+  IsCancelled: TScanCancelled): TFileTree;
 var
   Devices: TDeviceSet;
   Tree: TFileTree;
@@ -125,6 +132,8 @@ begin
 
     while StackTop >= 0 do
     begin
+      if Assigned(IsCancelled) and IsCancelled() then
+        Break;
       Item := Stack[StackTop];
       Dec(StackTop);
 

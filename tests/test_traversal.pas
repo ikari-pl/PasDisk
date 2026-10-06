@@ -88,6 +88,55 @@ var
   Kids: TFPList;
   I: Integer;
   Sum: Int64;
+var
+  CancelPolls, CancelAfter: Integer;
+
+function CancelAfterPolls: Boolean;
+begin
+  Inc(CancelPolls);
+  Result := CancelPolls > CancelAfter;
+end;
+
+procedure TestCancellation;
+var
+  Full, Part: TFileTree;
+begin
+  { TraversalScanner.swift isCancelled: polled per directory; a cancelled
+    scan stops early and returns what it has. }
+  Full := ScanPath(Root);
+  try
+    CancelPolls := 0;
+    CancelAfter := 0;
+    Part := ScanPath(Root, nil, nil, @CancelAfterPolls);
+    try
+      Expect(Part.NodeCount = 1, Format('cancelled at once: root only (%d nodes)', [Part.NodeCount]));
+    finally
+      Part.Free;
+    end;
+    CancelPolls := 0;
+    CancelAfter := 1;
+    Part := ScanPath(Root, nil, nil, @CancelAfterPolls);
+    try
+      Expect((Part.NodeCount > 1) and (Part.NodeCount < Full.NodeCount),
+        Format('cancelled after one directory: partial tree (%d of %d nodes)',
+          [Part.NodeCount, Full.NodeCount]));
+    finally
+      Part.Free;
+    end;
+    CancelPolls := 0;
+    CancelAfter := MaxInt;
+    Part := ScanPath(Root, nil, nil, @CancelAfterPolls);
+    try
+      Expect(Part.NodeCount = Full.NodeCount, 'never cancelled: full tree');
+      Expect(CancelPolls >= 3, Format('polled once per directory (%d polls)', [CancelPolls]));
+    finally
+      Part.Free;
+    end;
+  finally
+    Full.Free;
+  end;
+end;
+
 procedure TestAllowedDevices;
 var
   Devs: TDeviceSet;
@@ -120,6 +169,7 @@ begin
     WriteBytes(Root + '/a/b/more', 50 * 1024);
     Before := Total;
     TestAllowedDevices;
+    TestCancellation;
 
     Expect(CreateHardLink(Root + '/a/data', Root + '/a/b/data-link'), 'create hard link');
     WithLink := Total;

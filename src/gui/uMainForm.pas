@@ -29,10 +29,12 @@ type
     procedure Execute; override;
   public
     constructor Create(const APath: string);
+    { Valid only after WaitFor. }
     property Tree: TFileTree read FTree;
     property Error: string read FError;
-    property Bytes: Int64 read FBytes;
-    property Items: Integer read FItems;
+    { Progress counters, written by the scan thread and read by the UI. }
+    function Bytes: Int64;
+    function Items: Integer;
     procedure SetProgress(ABytes: Int64; AItems: Integer);
   end;
 
@@ -81,6 +83,9 @@ type
     procedure StyleChrome;
     procedure StartScan(const APath, AName: string; Total, FreeBytes: QWord);
      procedure OnPoll(Sender: TObject);
+    { Stops a running scan (window close, Disks) without waiting for the
+      walk to finish; its partial tree is discarded. }
+    procedure CancelScan;
      procedure OnThemeChange(Sender: TObject);
      procedure ApplyTheme;
     procedure ScanFinished;
@@ -124,7 +129,10 @@ const
   CBarTrack = clBtnShadow;
   CBarFill  = clHighlight;
 
-var
+threadvar
+  { The scan thread running on this OS thread: TScanProgress and
+    TScanCancelled are plain procedures, so the thunks find their thread
+    here. }
   ActiveScanThread: TScanThread;
 
 function ResolvePath(const Path: string): string;
@@ -144,8 +152,18 @@ end;
 
 procedure TScanThread.SetProgress(ABytes: Int64; AItems: Integer);
 begin
-  FBytes := ABytes;
-  FItems := AItems;
+  InterLockedExchange64(FBytes, ABytes);
+  InterLockedExchange(FItems, AItems);
+end;
+
+function TScanThread.Bytes: Int64;
+begin
+  Result := InterLockedCompareExchange64(FBytes, 0, 0);
+end;
+
+function TScanThread.Items: Integer;
+begin
+  Result := InterLockedCompareExchange(FItems, 0, 0);
 end;
 
 procedure ScanProgressThunk(BytesScanned: Int64; ItemsScanned: Integer);
@@ -154,12 +172,22 @@ begin
     ActiveScanThread.SetProgress(BytesScanned, ItemsScanned);
 end;
 
+function ScanCancelledThunk: Boolean;
+begin
+  Result := TThread.CheckTerminated;
+end;
+
 procedure TScanThread.Execute;
 begin
   ActiveScanThread := Self;
   try
     try
-      FTree := ScanPath(FPath, @ScanProgressThunk);
+      { ScanEngine.swift: full scans include the Data volume behind the
+        firmlinks; a cancelled scan's partial tree is discarded. }
+      FTree := ScanPath(FPath, @ScanProgressThunk,
+        SubtreeAllowedDevices(FPath), @ScanCancelledThunk);
+      if Terminated then
+        FreeAndNil(FTree);
     except
       on E: Exception do
         FError := E.Message;
@@ -590,12 +618,7 @@ end;
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   StopWatchingAppearance;
-  if FScanThread <> nil then
-  begin
-    FScanThread.Terminate;
-    FScanThread.WaitFor;
-    FScanThread.Free;
-  end;
+  CancelScan;
   FTree.Free;
   FCollector.Free;
   FBreadcrumbs.Free;
@@ -656,7 +679,7 @@ begin
   FCrumb.Caption := FRootName + '  —  preparing…';
   Caption := FRootName + ' — OpenDisk';
   FStatus.SimpleText := 'Scanning ' + Expanded + '…';
-  FDisksBtn.Enabled := False;
+  { Disks stays enabled: it cancels the scan. }
   FBackBtn.Enabled := False;
   FRefreshBtn.Enabled := False;
   FScanThread := TScanThread.Create(Expanded);
@@ -688,6 +711,9 @@ var
 begin
   Thread := FScanThread;
   FScanThread := nil;
+  { Finished is set as Execute returns; WaitFor makes its writes (Tree,
+    Error) visible to this thread. }
+  Thread.WaitFor;
   FDisksBtn.Enabled := True;
   FBackBtn.Enabled := True;
   FRefreshBtn.Enabled := True;
@@ -848,10 +874,22 @@ begin
   end;
 end;
 
+procedure TMainForm.CancelScan;
+begin
+  FPoll.Enabled := False;
+  if FScanThread = nil then
+    Exit;
+  FScanThread.Terminate;
+  FScanThread.WaitFor;
+  FreeAndNil(FScanThread);
+  FBackBtn.Enabled := True;
+  FRefreshBtn.Enabled := True;
+  FMode := umPicker;
+end;
+
 procedure TMainForm.DisksClick(Sender: TObject);
 begin
-  if FScanThread <> nil then
-    Exit;
+  CancelScan;
   FreeAndNil(FTree);
   FChart.Root := nil;
   FList.Clear;
