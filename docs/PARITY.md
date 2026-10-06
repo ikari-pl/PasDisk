@@ -47,7 +47,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Prune to 8 files / 4 GiB; remove `.tmp` files older than 1 h | ScanCache.swift:111-145 | units/ScanCache.pas:58-59, 166-244 | Done | N/A | od-31j.36 | Cache dir and hash case differ (`~/Library/Caches/opendisk`, uppercase hex), so the two apps' caches are not interchangeable. |
 | Scan tries the cache automatically and replays FSEvents (peek → journal → apply → save) | ScanEngine.swift:179-242 | opendisk.lpr:154-224 (`rescan` command only) | Done | Done | od-31j.12 | ScanForAnalysis(UseCache) 9b2f060, used by the GUI; the CLI keeps explicit `scan` (full walk) and `rescan` (replay). |
 | Replay time budget (half the expected scan time, 2-30 s) | ScanEngine.swift:244-246 | units/FSEventsJournal.pas:277-285; opendisk.lpr:64-78 | Done | Done | od-31j.5 | GUI since 9b2f060. |
-| Background cache save | ScanEngine.swift:248-254 | opendisk.lpr:50-62 (synchronous) | Done | Partial | od-31j.6 | The GUI saves on the scan thread before showing the final tree (9b2f060); Swift saves on a background queue after returning it. |
+| Background cache save | ScanEngine.swift:248-254 | units/ScanTopology.pas (SaveCacheInBackground, WaitForCacheSaves) | Done | Done | od-31j.6 | The scan returns its tree and a copy is written by a background thread, one save at a time; the unit waits for a save in progress at exit. |
 | FSEvents journal: HistoryDone, dropped/wrapped/root-changed abort, MustScanSubDirs, 40k cap, sorted output | SystemInterop/FSEventsChangeJournal.swift:5-165 | units/FSEventsJournal.pas:73-260 | Done | Done | od-31j.5, od-31j.23 | GUI since 9b2f060. |
 | `currentEventID` captured at scan start | FSEventsChangeJournal.swift:162; ScanEngine.swift:187 | units/FSEventsJournal.pas:150; opendisk.lpr:131-132 | Done | Done | od-31j.5 | GUI since 9b2f060. |
 | Incremental apply: changed dirs, subtree rescans, hard-link policy, adopt-then-validate | Services/Scanning/IncrementalUpdater.swift:6-220 | units/Incremental.pas:47-355, 379-414 | Done | Done | od-31j.22, od-31j.30, od-31j.32 | GUI since 9b2f060. |
@@ -231,8 +231,8 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 88 |
-| Partial | 3 | 2 |
+| Done | 41 | 89 |
+| Partial | 3 | 1 |
 | Missing | 1 | 4 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |

@@ -107,6 +107,8 @@ begin
     T := ScanForAnalysis(Dir, nil, nil, nil, nil, True, @RecordPhase);
     T.Free;
     Expect(Phases = '', 'first scan: no cache, no checking phase');
+    { saveCacheInBackground: the file follows the result. }
+    Expect(WaitForCacheSaves, 'the background cache save finishes');
     Expect(FileExists(ScanCacheFilePath(Dir)), 'first scan saves the cache');
 
     F := TFileStream.Create(Dir + '/sub/b.bin', fmCreate);
@@ -126,12 +128,14 @@ begin
     finally
       T.Free;
     end;
+    WaitForCacheSaves;
 
     Phases := '';
     T := ScanForAnalysis(Dir, nil, nil, nil, nil, False, @RecordPhase);
     T.Free;
     Expect(Phases = '', 'without UseCache the cache is ignored');
   finally
+    WaitForCacheSaves;
     ScanCacheSetDirectory('');
     DeleteFile(Dir + '/sub/a.bin');
     DeleteFile(Dir + '/sub/b.bin');

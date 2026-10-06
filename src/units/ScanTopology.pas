@@ -45,6 +45,10 @@ function ScanForAnalysis(const Path: string; Progress: TScanProgress = nil;
   OnPartial: TScanPartial = nil; UseCache: Boolean = False;
   OnPhase: TScanPhaseChanged = nil): TFileTree;
 
+{ Waits up to TimeoutMs for cache files still being written in the
+  background; True when none are left. }
+function WaitForCacheSaves(TimeoutMs: Integer = 10000): Boolean;
+
 implementation
 
 uses
@@ -109,6 +113,68 @@ begin
     UserPhase(CheckingChanges);
 end;
 
+type
+  { ScanEngine.swift saveCacheInBackground: writes a copy of the tree off
+    the scan, one save at a time (ScanCacheSave names its temporary file
+    by the clock). }
+  TCacheSaveThread = class(TThread)
+  private
+    FTree: TFileTree;
+    FPath: string;
+    FHeader: TScanCacheHeader;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(Tree: TFileTree; const Path: string;
+      const Header: TScanCacheHeader);
+  end;
+
+var
+  SaveLock: TRTLCriticalSection;
+  PendingSaves: LongInt = 0;
+
+constructor TCacheSaveThread.Create(Tree: TFileTree; const Path: string;
+  const Header: TScanCacheHeader);
+begin
+  FTree := Tree;
+  FPath := Path;
+  FHeader := Header;
+  FreeOnTerminate := True;
+  inherited Create(False);
+end;
+
+procedure TCacheSaveThread.Execute;
+begin
+  try
+    EnterCriticalSection(SaveLock);
+    try
+      ScanCacheSave(FTree, FPath, FHeader);
+    finally
+      LeaveCriticalSection(SaveLock);
+    end;
+  finally
+    FTree.Free;
+    InterlockedDecrement(PendingSaves);
+  end;
+end;
+
+procedure SaveCacheInBackground(Tree: TFileTree; const Path: string;
+  const Header: TScanCacheHeader);
+begin
+  InterlockedIncrement(PendingSaves);
+  TCacheSaveThread.Create(Tree.Clone, Path, Header);
+end;
+
+function WaitForCacheSaves(TimeoutMs: Integer): Boolean;
+var
+  Until_: QWord;
+begin
+  Until_ := GetTickCount64 + QWord(TimeoutMs);
+  while (PendingSaves > 0) and (GetTickCount64 < Until_) do
+    Sleep(10);
+  Result := PendingSaves = 0;
+end;
+
 function CacheHeader(EventID: QWord; CapturedAt, FullScanSeconds: Double): TScanCacheHeader;
 begin
   Result.EventID := EventID;
@@ -165,7 +231,7 @@ begin
           begin
             if Unreadable <> nil then
               Unreadable^ := 0;
-            ScanCacheSave(Cached.Tree, ScanPathName,
+            SaveCacheInBackground(Cached.Tree, ScanPathName,
               CacheHeader(StartEventID, StartedAt, Header.FullScanSeconds));
             Exit(Cached.Tree);
           end;
@@ -193,7 +259,7 @@ begin
     Unreadable, Workers, OnPartial);
   Result.SetRootName(RootName);
   if CacheEnabled and not (Assigned(IsCancelled) and IsCancelled()) then
-    ScanCacheSave(Result, ScanPathName,
+    SaveCacheInBackground(Result, ScanPathName,
       CacheHeader(StartEventID, StartedAt, (GetTickCount64 - Started) / 1000.0));
 end;
 
@@ -343,5 +409,13 @@ begin
     CacheEnabled := False;
   end;
 end;
+
+initialization
+  InitCriticalSection(SaveLock);
+
+finalization
+  { Let a save in progress finish before the process goes. }
+  WaitForCacheSaves;
+  DoneCriticalSection(SaveLock);
 
 end.
