@@ -16,7 +16,8 @@ uses
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
-  PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing;
+  PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing,
+  PlatformListBatch;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -1900,6 +1901,8 @@ var
   end;
 
 begin
+  { One table reload for the whole refill, not one per row. }
+  BeginListBatch(FList);
   FList.Items.BeginUpdate;
   try
     FList.Clear;
@@ -1986,6 +1989,7 @@ begin
     ApplyListAutomation;
   finally
     FList.Items.EndUpdate;
+    EndListBatch(FList);
   end;
 end;
 
@@ -2001,39 +2005,107 @@ begin
     Result := FTree.SizeOf(ID);
 end;
 
+type
+  TSortRow = record
+    ID: TNodeID;
+    Name: string;
+    Size: Int64;
+  end;
+  TSortRows = array of TSortRow;
+
+{ DiskAnalysisView visibleItems sorted by the header: rows are read once,
+  merge-sorted (stable, O(n log n)) and written back in one update. }
 procedure TMainForm.SortListRows;
 var
-  I, J: Integer;
-  A, B: TNodeID;
-  Swap: Boolean;
-  NameA, NameB: string;
-  SizeA, SizeB: Int64;
-  Comparison: Integer;
-begin
-  for I := 0 to FList.Items.Count - 2 do
-    for J := I + 1 to FList.Items.Count - 1 do
+  Rows, Scratch: TSortRows;
+  I, N: Integer;
+
+  function Before(const A, B: TSortRow): Boolean;
+  var
+    Comparison: Integer;
+  begin
+    if FSortField = lsName then
+      Comparison := CompareText(A.Name, B.Name)
+    else if A.Size < B.Size then
+      Comparison := -1
+    else if A.Size > B.Size then
+      Comparison := 1
+    else
+      Comparison := 0;
+    if FSortAscending then
+      Result := Comparison < 0
+    else
+      Result := Comparison > 0;
+  end;
+
+  procedure MergeSort(Lo, Hi: Integer);
+  var
+    Mid, L, R, K: Integer;
+  begin
+    if Hi - Lo < 1 then
+      Exit;
+    Mid := (Lo + Hi) div 2;
+    MergeSort(Lo, Mid);
+    MergeSort(Mid + 1, Hi);
+    L := Lo;
+    R := Mid + 1;
+    K := Lo;
+    while (L <= Mid) and (R <= Hi) do
     begin
-      A := TNodeID(PtrInt(FList.Items.Objects[I]));
-      B := TNodeID(PtrInt(FList.Items.Objects[J]));
-      SizeA := RowSizeOf(A);
-      SizeB := RowSizeOf(B);
-      NameA := FList.Items[I];
-      NameB := FList.Items[J];
-      if FSortField = lsName then
-        Comparison := CompareText(NameA, NameB)
+      { Equal rows keep their order. }
+      if Before(Rows[R], Rows[L]) then
+      begin
+        Scratch[K] := Rows[R];
+        Inc(R);
+      end
       else
       begin
-        if SizeA < SizeB then Comparison := -1
-        else if SizeA > SizeB then Comparison := 1
-        else Comparison := 0;
+        Scratch[K] := Rows[L];
+        Inc(L);
       end;
-      if FSortAscending then Swap := Comparison > 0
-      else Swap := Comparison < 0;
-      if Swap then
-      begin
-        FList.Items.Exchange(I, J);
-      end;
+      Inc(K);
     end;
+    while L <= Mid do
+    begin
+      Scratch[K] := Rows[L];
+      Inc(L);
+      Inc(K);
+    end;
+    while R <= Hi do
+    begin
+      Scratch[K] := Rows[R];
+      Inc(R);
+      Inc(K);
+    end;
+    for K := Lo to Hi do
+      Rows[K] := Scratch[K];
+  end;
+
+begin
+  N := FList.Items.Count;
+  if N < 2 then
+    Exit;
+  SetLength(Rows, N);
+  SetLength(Scratch, N);
+  for I := 0 to N - 1 do
+  begin
+    Rows[I].ID := TNodeID(PtrInt(FList.Items.Objects[I]));
+    Rows[I].Name := FList.Items[I];
+    Rows[I].Size := RowSizeOf(Rows[I].ID);
+  end;
+  MergeSort(0, N - 1);
+  BeginListBatch(FList);
+  FList.Items.BeginUpdate;
+  try
+    for I := 0 to N - 1 do
+    begin
+      FList.Items[I] := Rows[I].Name;
+      FList.Items.Objects[I] := TObject(PtrInt(Rows[I].ID));
+    end;
+  finally
+    FList.Items.EndUpdate;
+    EndListBatch(FList);
+  end;
 end;
 
 { The table selects natively (click, Shift range, Cmd toggle, and a
