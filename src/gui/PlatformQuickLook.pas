@@ -27,6 +27,10 @@ procedure ShowQuickLook(Window: TCustomForm; const Paths: array of string;
 procedure CloseQuickLook;
 function QuickLookVisible: Boolean;
 
+{ CollectorBar's QuickLookSheet: Path in a QLPreviewView on a 680 x 520
+  sheet over Window, with Done (Return) below a divider. }
+procedure ShowQuickLookSheet(Window: TCustomForm; const Path: string);
+
 implementation
 
 {$IFDEF DARWIN}
@@ -46,6 +50,24 @@ type
     procedure reloadData; message 'reloadData';
     procedure setCurrentPreviewItemIndex(index: NSInteger);
       message 'setCurrentPreviewItemIndex:';
+  end;
+
+  QLPreviewView = objcclass external (NSView)
+  public
+    function initWithFrame_style(frameRect: NSRect; style: NSUInteger): id;
+      message 'initWithFrame:style:';
+    procedure setPreviewItem(item: id); message 'setPreviewItem:';
+    procedure setAutostarts(value: ObjCBOOL); message 'setAutostarts:';
+    procedure close; message 'close';
+  end;
+
+  { Done on the preview sheet: ends it on its parent window. }
+  TODSheetCloser = objcclass(NSObject)
+  private
+    FSheet: NSWindow;
+    FPreview: QLPreviewView;
+  public
+    procedure done(sender: id); message 'odSheetDone:';
   end;
 
   { QLPreviewPanelDataSource: the file URLs (NSURL is a QLPreviewItem). }
@@ -228,6 +250,82 @@ begin
   end;
 end;
 
+var
+  SheetCloser: TODSheetCloser = nil;
+
+procedure TODSheetCloser.done(sender: id);
+var
+  Parent: NSWindow;
+begin
+  if FSheet = nil then
+    Exit;
+  Parent := FSheet.sheetParent;
+  if FPreview <> nil then
+    FPreview.close;
+  if Parent <> nil then
+    Parent.endSheet(FSheet)
+  else
+    FSheet.orderOut(nil);
+  FSheet.release;
+  FSheet := nil;
+  FPreview := nil;
+end;
+
+procedure ShowQuickLookSheet(Window: TCustomForm; const Path: string);
+const
+  SheetW = 680;
+  SheetH = 520;
+  BarH = 48;
+var
+  Parent: NSWindow;
+  Sheet: NSWindow;
+  Content: NSView;
+  Preview: QLPreviewView;
+  Line: NSBox;
+  Done: NSButton;
+begin
+  Parent := WindowOf(Window);
+  if (Parent = nil) or (Parent.attachedSheet <> nil) then
+    Exit;
+  if SheetCloser = nil then
+    SheetCloser := TODSheetCloser.alloc.init;
+  if SheetCloser.FSheet <> nil then
+    Exit;
+  Sheet := NSWindow.alloc.initWithContentRect_styleMask_backing_defer(
+    NSMakeRect(0, 0, SheetW, SheetH), NSTitledWindowMask, NSBackingStoreBuffered, False);
+  Sheet.setReleasedWhenClosed(False);
+  Content := Sheet.contentView;
+  Preview := QLPreviewView(QLPreviewView.alloc.initWithFrame_style(
+    NSMakeRect(0, BarH + 1, SheetW, SheetH - BarH - 1), 0));
+  if Preview <> nil then
+  begin
+    Preview.setAutoresizingMask(NSViewWidthSizable or NSViewHeightSizable);
+    Preview.setAutostarts(True);
+    Preview.setPreviewItem(NSURL.fileURLWithPath(NSString.stringWithUTF8String(PChar(Path))));
+    Content.addSubview(Preview);
+    Preview.release;
+  end;
+  { Divider() }
+  Line := NSBox.alloc.initWithFrame(NSMakeRect(0, BarH, SheetW, 1));
+  Line.setBoxType(NSBoxSeparator);
+  Line.setAutoresizingMask(NSViewWidthSizable or NSViewMaxYMargin);
+  Content.addSubview(Line);
+  Line.release;
+  { Button("Done").keyboardShortcut(.defaultAction), padding 10. }
+  Done := NSButton.alloc.initWithFrame(NSMakeRect(SheetW - 10 - 80, 10, 80, 28));
+  Done.setTitle(NSString.stringWithUTF8String('Done'));
+  Done.setBezelStyle(NSRoundedBezelStyle);
+  Done.setKeyEquivalent(NSString.stringWithUTF8String(#13));
+  Done.setAutoresizingMask(NSViewMinXMargin or NSViewMaxYMargin);
+  Done.setTarget(SheetCloser);
+  Done.setAction(sel_registerName('odSheetDone:'));
+  Content.addSubview(Done);
+  Done.release;
+  SheetCloser.FSheet := Sheet;
+  SheetCloser.FPreview := Preview;
+  Parent.beginSheet_completionHandler(Sheet, nil);
+end;
+
 procedure CloseQuickLook;
 begin
   if QLPreviewPanel.sharedPreviewPanelExists then
@@ -248,6 +346,10 @@ begin
 end;
 
 procedure CloseQuickLook;
+begin
+end;
+
+procedure ShowQuickLookSheet(Window: TCustomForm; const Path: string);
 begin
 end;
 

@@ -2828,9 +2828,8 @@ begin
   ShowQuickLook(Self, Paths, Start);
 end;
 
-{ CollectedRow .contextMenu: Preview, Show in Finder, Open in Terminal,
-  then Remove “name” from Collector. Preview uses the Quick Look panel
-  (Swift opens a QuickLookSheet). }
+{ CollectedRow .contextMenu: Preview (the QuickLookSheet), Show in
+  Finder, Open in Terminal, then Remove “name” from Collector. }
 procedure TMainForm.CollectorRowMenu(Sender: TObject; const Path: string;
   const ScreenPt: TPoint);
 var
@@ -2871,13 +2870,22 @@ begin
   (Sender as TTimer).Enabled := False;
   I := StrToIntDef(GetEnvironmentVariable('OPENDISK_GUI_COLLECTOR_MENU'), -1);
   if (I >= 0) and (I < FCollector.Count) then
-    CollectorRowMenu(nil, TCollectedFile(FCollector.Items[I]).Path,
-      FCollectorBar.ClientToScreen(Point(80, 0)));
+    if GetEnvironmentVariable('OPENDISK_GUI_COLLECTOR_PREVIEW') = '1' then
+    begin
+      { …=<index> with OPENDISK_GUI_COLLECTOR_PREVIEW=1: Preview instead
+        of the menu. }
+      FMenuItem.Path := TCollectedFile(FCollector.Items[I]).Path;
+      CollectorPreviewClick(nil);
+    end
+    else
+      CollectorRowMenu(nil, TCollectedFile(FCollector.Items[I]).Path,
+        FCollectorBar.ClientToScreen(Point(80, 0)));
 end;
 
+{ CollectedRow onPreview: the QuickLookSheet. }
 procedure TMainForm.CollectorPreviewClick(Sender: TObject);
 begin
-  ShowQuickLook(Self, [FMenuItem.Path], 0);
+  ShowQuickLookSheet(Self, FMenuItem.Path);
 end;
 
 procedure TMainForm.CollectorTerminalClick(Sender: TObject);
