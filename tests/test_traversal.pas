@@ -273,6 +273,98 @@ begin
     (VolumeWorkerCount >= 4) and (VolumeWorkerCount <= 8), 'worker counts within Swift bounds');
 end;
 
+var
+  Partials, PartialsOffThread, BadPartials: Integer;
+  FinalNodes: Integer;
+
+var
+  Snapshots: array of TFileTree;
+  SnapshotSubset: Boolean;
+
+procedure KeepSnapshot(Tree: TFileTree);
+begin
+  SetLength(Snapshots, Length(Snapshots) + 1);
+  Snapshots[High(Snapshots)] := Tree;
+end;
+
+procedure CountPartial(Tree: TFileTree);
+begin
+  Inc(Partials);
+  if GetCurrentThreadId <> CallerThread then
+    Inc(PartialsOffThread);
+  if (Tree.NodeCount < 1) or (Tree.SizeOf(RootID) < 0) then
+    Inc(BadPartials);
+  Tree.Free;
+end;
+
+{ ScanEngine.swift partial snapshots, in both scan modes. }
+procedure TestPartials;
+var
+  T: TFileTree;
+  W: Integer;
+  I, J: Integer;
+begin
+  SetSnapshotTiming(0, 0);
+  try
+    for W in [1, 4] do
+    begin
+      Partials := 0;
+      PartialsOffThread := 0;
+      BadPartials := 0;
+      CallerThread := GetCurrentThreadId;
+      T := ScanPath(Root + '/parallel', nil, nil, nil, nil, W, @CountPartial);
+      try
+        Expect(Partials > 0, Format('%d worker(s): snapshots published (%d)', [W, Partials]));
+        Expect(PartialsOffThread = 0, Format('%d worker(s): snapshots on the calling thread', [W]));
+        Expect(BadPartials = 0, Format('%d worker(s): snapshots are valid trees', [W]));
+      finally
+        T.Free;
+      end;
+    end;
+  finally
+    SetSnapshotTiming(500, 15000);
+  end;
+  Partials := 0;
+  T := ScanPath(Root + '/parallel', nil, nil, nil, nil, 4, @CountPartial);
+  T.Free;
+  Expect(Partials = 0, 'a scan shorter than 500 ms publishes no snapshot');
+
+  { Backoff: 8x the time a snapshot took, between 500 ms and 15 s. }
+  Expect(SnapshotDelayAfter(0) = 500, 'backoff floor 500 ms');
+  Expect(SnapshotDelayAfter(100) = 800, 'backoff 8x');
+  Expect(SnapshotDelayAfter(5000) = 15000, 'backoff ceiling 15 s');
+
+  { Content and lifetime: each snapshot is a subset of the final tree and
+    belongs to the callee (changing it leaves the scan untouched). }
+  SetSnapshotTiming(0, 0);
+  try
+    SnapshotSubset := True;
+    T := ScanPath(Root + '/parallel', nil, nil, nil, nil, 1, @KeepSnapshot);
+    try
+      for I := 0 to High(Snapshots) do
+      begin
+        if Snapshots[I].SizeOf(RootID) > T.SizeOf(RootID) then
+          SnapshotSubset := False;
+        for J := 1 to Snapshots[I].NodeCount - 1 do
+          if T.NodeIDForPath(Snapshots[I].PathOf(J), T.NameOf(RootID)) = NoNode then
+            SnapshotSubset := False;
+        Snapshots[I].AddNode('callee-owned', RootID, 1, False);
+      end;
+      Expect(Length(Snapshots) > 0, 'snapshots kept by the callee');
+      Expect(SnapshotSubset, 'every snapshot path and size is within the final tree');
+      Expect(T.ChildNamed(RootID, 'callee-owned') = NoNode,
+        'changing a snapshot does not touch the scan');
+    finally
+      T.Free;
+      for I := 0 to High(Snapshots) do
+        Snapshots[I].Free;
+      Snapshots := nil;
+    end;
+  finally
+    SetSnapshotTiming(500, 15000);
+  end;
+end;
+
 { ScanMetrics.swift unreadableDirectories: folders that cannot be listed,
   the root included. }
 procedure TestUnreadable;
@@ -354,6 +446,7 @@ begin
     end;
     TestUnreadable;
     TestParallel;
+    TestPartials;
   finally
     Cleanup(Root);
   end;

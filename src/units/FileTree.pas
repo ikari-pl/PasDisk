@@ -111,6 +111,9 @@ type
     procedure Merge(Other: TFileTree; Directory: TNodeID);
     { The name (and so the path prefix) of the root node. }
     procedure SetRootName(const Name: string);
+    { An independent copy (Swift's FileTree is a value type: partial
+      snapshots copy it). }
+    function Clone: TFileTree;
     { Fills Dest with direct children of ID, sorted largest-first. }
     procedure ChildrenSortedForDisplay(ID: TNodeID; Dest: TFPList);
     { Binary serialization — magic DMT3, matches Swift FileTree layout. }
@@ -383,6 +386,17 @@ procedure TFileTree.Merge(Other: TFileTree; Directory: TNodeID);
 
 begin
   MergeChildren(Directory, RootID);
+end;
+
+function TFileTree.Clone: TFileTree;
+begin
+  Result := TFileTree.Create(FNames[RootID]);
+  Result.FNodes := Copy(FNodes, 0, FCount);
+  Result.FNames := Copy(FNames, 0, FCount);
+  Result.FCount := FCount;
+  Result.FHardLinks := Copy(FHardLinks, 0, FHardLinkCount);
+  Result.FHardLinkIDs := Copy(FHardLinkIDs, 0, FHardLinkCount);
+  Result.FHardLinkCount := FHardLinkCount;
 end;
 
 procedure TFileTree.SetRootName(const Name: string);

@@ -30,9 +30,11 @@ function SiblingVolumeNames: TStringArray;
 
 { Scans Path as the Swift app does; Unreadable (optional) counts folders
   that could not be listed across every volume walked. Progress reports
-  totals across volumes. }
+  totals across volumes. OnPartial receives snapshots composed like the
+  final tree (ScanEngine.swift PartialResultAssembler). }
 function ScanForAnalysis(const Path: string; Progress: TScanProgress = nil;
-  IsCancelled: TScanCancelled = nil; Unreadable: PInteger = nil): TFileTree;
+  IsCancelled: TScanCancelled = nil; Unreadable: PInteger = nil;
+  OnPartial: TScanPartial = nil): TFileTree;
 
 implementation
 
@@ -95,6 +97,12 @@ threadvar
   LastBytes: Int64;
   LastItems: Integer;
   UserProgress: TScanProgress;
+  { Partial snapshots: the caller's callback, the requested root name, and
+    during a boot-group scan the merged tree and the sibling being walked. }
+  UserPartial: TScanPartial;
+  PartialRootName: string;
+  BootTree: TFileTree;
+  SiblingMount: string;
 
 procedure CombinedProgress(BytesScanned: Int64; ItemsScanned: Integer);
 begin
@@ -102,6 +110,51 @@ begin
   LastItems := ItemsScanned;
   if Assigned(UserProgress) then
     UserProgress(BaseBytes + BytesScanned, BaseItems + ItemsScanned);
+end;
+
+procedure SubtreePartial(Tree: TFileTree);
+begin
+  Tree.SetRootName(PartialRootName);
+  UserPartial(Tree);
+end;
+
+{ composeBootVolumeGroup applied to a snapshot. }
+procedure ComposeBoot(Tree: TFileTree);
+begin
+  Tree.RemoveChildNamed(RootID, 'Volumes');
+  Tree.ResetDirectorySizes;
+  Tree.RollUpDirectorySizes;
+end;
+
+procedure RootVolumePartial(Tree: TFileTree);
+begin
+  ComposeBoot(Tree);
+  UserPartial(Tree);
+end;
+
+procedure SiblingPartial(Tree: TFileTree);
+var
+  Merged: TFileTree;
+  Target: TNodeID;
+begin
+  try
+    Merged := BootTree.Clone;
+    Target := Merged.NodeIDForPath(SiblingMount, '/');
+    if (Target <> NoNode) and Merged.IsDirectory(Target) then
+      Merged.Merge(Tree, Target);
+  finally
+    Tree.Free;
+  end;
+  ComposeBoot(Merged);
+  UserPartial(Merged);
+end;
+
+function PartialFor(Handler: TScanPartial): TScanPartial;
+begin
+  if Assigned(UserPartial) then
+    Result := Handler
+  else
+    Result := nil;
 end;
 
 function ScanBootVolumeGroup(Progress: TScanProgress; IsCancelled: TScanCancelled;
@@ -120,7 +173,7 @@ begin
   LastBytes := 0;
   LastItems := 0;
   Result := ScanPath('/', @CombinedProgress, SubtreeAllowedDevices('/'),
-    IsCancelled, Unreadable, WorkersFor('/'));
+    IsCancelled, Unreadable, WorkersFor('/'), PartialFor(@RootVolumePartial));
   for I := 0 to High(Names) do
   begin
     if Assigned(IsCancelled) and IsCancelled() then
@@ -131,8 +184,15 @@ begin
     LastItems := 0;
     Mount := SystemVolumesDirectory + '/' + Names[I];
     Count := 0;
-    Sibling := ScanPath(Mount, @CombinedProgress, nil, IsCancelled, @Count,
-      WorkersFor(Mount));
+    BootTree := Result;
+    SiblingMount := Mount;
+    try
+      Sibling := ScanPath(Mount, @CombinedProgress, nil, IsCancelled, @Count,
+        WorkersFor(Mount), PartialFor(@SiblingPartial));
+    finally
+      { Never leave a pointer to a tree that may be freed. }
+      BootTree := nil;
+    end;
     try
       if Unreadable <> nil then
         Inc(Unreadable^, Count);
@@ -150,16 +210,23 @@ begin
 end;
 
 function ScanForAnalysis(const Path: string; Progress: TScanProgress;
-  IsCancelled: TScanCancelled; Unreadable: PInteger): TFileTree;
+  IsCancelled: TScanCancelled; Unreadable: PInteger;
+  OnPartial: TScanPartial): TFileTree;
 var
   ScanRoot: string;
 begin
   TuneProcessForScanning;
-  if (Path = '/') and (SystemVolumesDirectory <> '') then
-    Exit(ScanBootVolumeGroup(Progress, IsCancelled, Unreadable));
-  ScanRoot := ResolveDataVolumeAlias(Path);
-  Result := ScanPath(ScanRoot, Progress, SubtreeAllowedDevices(ScanRoot),
-    IsCancelled, Unreadable, WorkersFor(ScanRoot));
+  UserPartial := OnPartial;
+  PartialRootName := Path;
+  try
+    if (Path = '/') and (SystemVolumesDirectory <> '') then
+      Exit(ScanBootVolumeGroup(Progress, IsCancelled, Unreadable));
+    ScanRoot := ResolveDataVolumeAlias(Path);
+    Result := ScanPath(ScanRoot, Progress, SubtreeAllowedDevices(ScanRoot),
+      IsCancelled, Unreadable, WorkersFor(ScanRoot), PartialFor(@SubtreePartial));
+  finally
+    UserPartial := nil;
+  end;
   Result.SetRootName(Path);
 end;
 

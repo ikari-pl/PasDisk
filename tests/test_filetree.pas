@@ -351,6 +351,42 @@ begin
   end;
 end;
 
+procedure TestClone;
+var
+  A, B: TFileTree;
+  X, F: TNodeID;
+  Key: THardLinkKey;
+  Alloc: Int64;
+begin
+  A := TFileTree.Create('/r');
+  try
+    X := A.AddNode('x', RootID, 0, True);
+    F := A.AddNode('f', X, 10, False);
+    Key.Device := 1;
+    Key.FileID := 42;
+    A.RecordHardLink(F, Key, 10);
+    B := A.Clone;
+    try
+      B.AddNode('only-in-clone', RootID, 5, False);
+      B.SetRootName('/c');
+      Expect((A.NodeCount = 3) and (B.NodeCount = 4), 'clone grows independently');
+      Expect(A.PathOf(F) = '/r/x/f', 'original keeps its root name');
+      Expect(B.HardLinkOf(F, Key, Alloc) and (Key.FileID = 42) and (Alloc = 10),
+        'clone keeps hard-link records');
+      { Hard-link records are copies too. }
+      B.UpdateAllocatedSize(F, 99);
+      Expect(A.HardLinkOf(F, Key, Alloc) and (Alloc = 10),
+        'changing a clone''s hard-link record leaves the original''s');
+      A.AddNode('only-in-original', RootID, 1, False);
+      Expect(B.ChildNamed(RootID, 'only-in-original') = NoNode, 'original changes do not reach the clone');
+    finally
+      B.Free;
+    end;
+  finally
+    A.Free;
+  end;
+end;
+
 begin
   Failures := 0;
   TestRollUp;
@@ -360,6 +396,7 @@ begin
   TestPathRoundTrip;
   TestSortedChildren;
   TestMergeAndRemoveChild;
+  TestClone;
   if Failures = 0 then
   begin
     WriteLn('All FileTree tests passed.');

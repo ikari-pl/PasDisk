@@ -22,6 +22,8 @@ type
   { Polled once per directory; True stops the scan (TraversalScanner.swift
     isCancelled). }
   TScanCancelled = function: Boolean;
+  { A rolled-up copy of the tree so far; the callee owns it. }
+  TScanPartial = procedure(Tree: TFileTree);
 
 { Scans Path without leaving AllowedDevices plus Path's own device
   (TraversalScanner.swift: allowedDevices.union([rootDevice])). When
@@ -29,16 +31,26 @@ type
   callers discard it, as ScanEngine.swift does. When Unreadable is given
   it receives the number of directories that could not be listed, the
   root included (ScanMetrics.swift unreadableDirectories). Workers > 1
-  scans in parallel (child order then varies between runs). }
+  scans in parallel (child order then varies between runs). OnPartial,
+  on the caller's thread, receives snapshots while the scan runs
+  (ScanEngine.swift partialTask: first after 500 ms, then every 8x the
+  time a snapshot took, between 500 ms and 15 s). }
 function ScanPath(const Path: string; Progress: TScanProgress = nil;
   const AllowedDevices: TDeviceSet = nil;
   IsCancelled: TScanCancelled = nil; Unreadable: PInteger = nil;
-  Workers: Integer = 1): TFileTree;
+  Workers: Integer = 1; OnPartial: TScanPartial = nil): TFileTree;
 
 { TraversalScanner.swift worker counts: min(5, max(3, CPUs / 4)) for a
   subtree, min(8, max(4, CPUs / 2)) for a whole volume. }
 function SubtreeWorkerCount: Integer;
 function VolumeWorkerCount: Integer;
+
+{ Test seam: snapshot interval bounds in ms (defaults 500 and 15000). }
+procedure SetSnapshotTiming(MinMs, MaxMs: QWord);
+
+{ Delay before the next snapshot when the last one took TookMs
+  (ScanEngine.swift: 8x the time taken, within the bounds). }
+function SnapshotDelayAfter(TookMs: QWord): QWord;
 { Append a fresh scan of Path under ParentID (ParentID must already exist). }
 function ScanInto(Tree: TFileTree; ParentID: TNodeID; const Path: string;
   Progress: TScanProgress = nil; const AllowedDevices: TDeviceSet = nil): Boolean;
@@ -119,8 +131,8 @@ begin
 end;
 
 type
-  { State shared by the workers of one parallel scan; every field but
-    Cancelled is guarded by Lock. }
+  { State shared by the workers of one parallel scan; every field is
+    guarded by Lock. }
   TParallelScan = class
   public
     Lock: TRTLCriticalSection;
@@ -195,7 +207,7 @@ var
   Key: THardLinkKey;
   NodeID: TNodeID;
   Prefix: string;
-  Pushed: Boolean;
+  Pushed, Skip: Boolean;
 begin
   S := FScan;
   repeat
@@ -221,10 +233,11 @@ begin
     S.Stack[S.Top].Path := '';
     Dec(S.Top);
     Inc(S.Busy);
+    Skip := S.Cancelled;
     LeaveCriticalSection(S.Lock);
 
     { Cancelled: drain the stack without reading, as Swift's workers do. }
-    if S.Cancelled then
+    if Skip then
       Read.Kind := drkCrossesDevice
     else
       Read := ReadDirectory(Item.Path, S.Devices);
@@ -280,9 +293,54 @@ begin
   until False;
 end;
 
+type
+  TSnapshotClock = record
+    Next: QWord;
+  end;
+
+const
+  SnapshotBackoff = 8;
+
+var
+  MinSnapshotMs: QWord = 500;
+  MaxSnapshotMs: QWord = 15000;
+
+procedure SetSnapshotTiming(MinMs, MaxMs: QWord);
+begin
+  MinSnapshotMs := MinMs;
+  MaxSnapshotMs := MaxMs;
+end;
+
+function SnapshotDelayAfter(TookMs: QWord): QWord;
+begin
+  Result := Min(MaxSnapshotMs, Max(MinSnapshotMs, TookMs * SnapshotBackoff));
+end;
+
+procedure StartSnapshotClock(var Clock: TSnapshotClock);
+begin
+  Clock.Next := GetTickCount64 + MinSnapshotMs;
+end;
+
+function SnapshotDue(const Clock: TSnapshotClock): Boolean;
+begin
+  Result := GetTickCount64 >= Clock.Next;
+end;
+
+{ Rolls up Snapshot, hands it to OnPartial and schedules the next one. }
+procedure PublishSnapshot(var Clock: TSnapshotClock; Snapshot: TFileTree;
+  Started: QWord; OnPartial: TScanPartial);
+var
+  Took: QWord;
+begin
+  Snapshot.RollUpDirectorySizes;
+  Took := GetTickCount64 - Started;
+  OnPartial(Snapshot);
+  Clock.Next := GetTickCount64 + SnapshotDelayAfter(Took);
+end;
+
 function ParallelScan(const Path: string; Progress: TScanProgress;
   const AllowedDevices: TDeviceSet; IsCancelled: TScanCancelled;
-  Unreadable: PInteger; Workers: Integer): TFileTree;
+  Unreadable: PInteger; Workers: Integer; OnPartial: TScanPartial): TFileTree;
 var
   S: TParallelScan;
   Threads: array of TScanWorker;
@@ -290,6 +348,10 @@ var
   Root: TWorkItem;
   I: Integer;
   Over: Boolean;
+  Clock: TSnapshotClock;
+  Snapshot: TFileTree;
+  Started: QWord;
+  Cancelling: Boolean;
   Bytes: Int64;
   Items: Integer;
 begin
@@ -312,23 +374,38 @@ begin
     Root.DirectoryID := RootID;
     Root.Path := Path;
     S.Push(Root);
+    { Before any worker exists: no lock needed yet. }
     S.Cancelled := Assigned(IsCancelled) and IsCancelled();
+    Cancelling := S.Cancelled;
 
     SetLength(Threads, Workers);
     for I := 0 to Workers - 1 do
       Threads[I] := TScanWorker.Create(S);
+    StartSnapshotClock(Clock);
     { ScanEngine.swift progressInterval: 33 ms. }
     repeat
-      RTLEventWaitFor(S.Done, 33);
+      Snapshot := nil;
+      Started := GetTickCount64;
       EnterCriticalSection(S.Lock);
       Over := S.Finished;
       Bytes := S.Bytes;
       Items := S.Items;
+      if Assigned(OnPartial) and not Over and SnapshotDue(Clock) then
+        Snapshot := S.Tree.Clone;
       LeaveCriticalSection(S.Lock);
+      if Snapshot <> nil then
+        PublishSnapshot(Clock, Snapshot, Started, OnPartial);
       if Assigned(Progress) then
         Progress(Bytes, Items);
-      if (not S.Cancelled) and Assigned(IsCancelled) and IsCancelled() then
+      if (not Cancelling) and Assigned(IsCancelled) and IsCancelled() then
+      begin
+        Cancelling := True;
+        EnterCriticalSection(S.Lock);
         S.Cancelled := True;
+        LeaveCriticalSection(S.Lock);
+      end;
+      if not Over then
+        RTLEventWaitFor(S.Done, 33);
     until Over;
     for I := 0 to High(Threads) do
     begin
@@ -345,7 +422,8 @@ end;
 
 function ScanPath(const Path: string; Progress: TScanProgress;
   const AllowedDevices: TDeviceSet;
-  IsCancelled: TScanCancelled; Unreadable: PInteger; Workers: Integer): TFileTree;
+  IsCancelled: TScanCancelled; Unreadable: PInteger; Workers: Integer;
+  OnPartial: TScanPartial): TFileTree;
 var
   Devices: TDeviceSet;
   Tree: TFileTree;
@@ -363,9 +441,11 @@ var
   Bytes: Int64;
   Items: Integer;
   Child: TWorkItem;
+  Clock: TSnapshotClock;
 begin
   if Workers > 1 then
-    Exit(ParallelScan(Path, Progress, AllowedDevices, IsCancelled, Unreadable, Workers));
+    Exit(ParallelScan(Path, Progress, AllowedDevices, IsCancelled, Unreadable,
+      Workers, OnPartial));
   Tree := TFileTree.Create(Path);
   Seen := THardLinkSeen.Create;
   Bytes := 0;
@@ -380,6 +460,7 @@ begin
         Inc(Unreadable^);
       Exit(Tree);
     end;
+    StartSnapshotClock(Clock);
     Devices := Copy(AllowedDevices);
     IncludeDevice(Devices, RootDevice);
 
@@ -447,6 +528,8 @@ begin
 
       if Assigned(Progress) then
         Progress(Bytes, Items);
+      if Assigned(OnPartial) and (StackTop >= 0) and SnapshotDue(Clock) then
+        PublishSnapshot(Clock, Tree.Clone, GetTickCount64, OnPartial);
     end;
 
     Tree.RollUpDirectorySizes;
