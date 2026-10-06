@@ -9,7 +9,7 @@ uses
   cthreads,
   {$ENDIF}
   SysUtils, Classes, DateUtils, Math, FileTree, Traversal, Formatters, ChartItem, RingsSVG,
-  SearchIndex, Incremental, ChangeJournal, JournalFactory, ScanCache, Volumes, PlatformFS,
+  SearchIndex, ScanTopology, Incremental, ChangeJournal, JournalFactory, ScanCache, Volumes, PlatformFS,
   PlatformShell;
 
 var
@@ -83,14 +83,14 @@ var
   Expanded: string;
 begin
   Expanded := ResolvePath(Path);
-  if not DirectoryExists(Expanded) then
+  if not DirectoryExists(ResolveDataVolumeAlias(Expanded)) then
   begin
     WriteLn(StdErr, 'Not a directory: ', Expanded);
     Halt(1);
   end;
   WriteLn('Scanning ', Expanded, ' …');
   LastProgressAt := 0;
-  Result := ScanPath(Expanded, @OnProgress, SubtreeAllowedDevices(Expanded));
+  Result := ScanForAnalysis(Expanded, @OnProgress);
   Write(#13, StringOfChar(' ', 60), #13);
 end;
 

@@ -59,6 +59,10 @@ function MountPointOf(const Path: string): string;
   ('/System/Volumes/Data'); '' on other platforms. }
 function DataVolumeMountPoint: string;
 
+{ Where macOS mounts the boot volume group's other volumes (VM, Preboot,
+  Update, ...: '/System/Volumes'); '' on other platforms. }
+function SystemVolumesDirectory: string;
+
 implementation
 
 {$IFDEF DARWIN}
@@ -262,6 +266,11 @@ begin
   Result := '/System/Volumes/Data';
 end;
 
+function SystemVolumesDirectory: string;
+begin
+  Result := '/System/Volumes';
+end;
+
 {$ELSE}
 {$IFDEF WINDOWS}
 uses
@@ -350,6 +359,11 @@ begin
   Result := '';
 end;
 
+function SystemVolumesDirectory: string;
+begin
+  Result := '';
+end;
+
 function SystemRootPath: string;
 begin
   Result := IncludeTrailingPathDelimiter(
@@ -404,6 +418,11 @@ begin
 end;
 
 function DataVolumeMountPoint: string;
+begin
+  Result := '';
+end;
+
+function SystemVolumesDirectory: string;
 begin
   Result := '';
 end;

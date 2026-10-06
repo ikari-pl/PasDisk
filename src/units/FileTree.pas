@@ -99,6 +99,16 @@ type
       directories get size 0 until the next roll-up, hard-link records
       come along (FileTree.swift adoptSubtree). }
     procedure AdoptSubtree(Other: TFileTree; OtherNode, Parent: TNodeID);
+    { Detaches Parent's child called Name and returns it, or NoNode
+      (FileTree.swift removeChild(named:of:)). }
+    function RemoveChildNamed(Parent: TNodeID; const Name: string): TNodeID;
+    { Copies Other's root children into Directory: directories already
+      present are merged recursively, a file in the way of a directory is
+      replaced, anything else already present is kept (FileTree.swift
+      merge(_:into:)). Sizes need a roll-up afterwards. }
+    procedure Merge(Other: TFileTree; Directory: TNodeID);
+    { The name (and so the path prefix) of the root node. }
+    procedure SetRootName(const Name: string);
     { Fills Dest with direct children of ID, sorted largest-first. }
     procedure ChildrenSortedForDisplay(ID: TNodeID; Dest: TFPList);
     { Binary serialization — magic DMT3, matches Swift FileTree layout. }
@@ -302,6 +312,74 @@ begin
     Key.FileID := 0;
     AllocatedSize := 0;
   end;
+end;
+
+function TFileTree.RemoveChildNamed(Parent: TNodeID; const Name: string): TNodeID;
+var
+  Previous, Current: TNodeID;
+begin
+  Previous := NoNode;
+  Current := FNodes[Parent].FirstChild;
+  while Current <> NoNode do
+  begin
+    if FNames[Current] = Name then
+    begin
+      if Previous = NoNode then
+        FNodes[Parent].FirstChild := FNodes[Current].NextSibling
+      else
+        FNodes[Previous].NextSibling := FNodes[Current].NextSibling;
+      FNodes[Current].Parent := NoNode;
+      FNodes[Current].NextSibling := NoNode;
+      Exit(Current);
+    end;
+    Previous := Current;
+    Current := FNodes[Current].NextSibling;
+  end;
+  Result := NoNode;
+end;
+
+procedure TFileTree.Merge(Other: TFileTree; Directory: TNodeID);
+
+  procedure MergeChildren(Into, OtherDirectory: TNodeID);
+  var
+    Kids: TFPList;
+    I: Integer;
+    OtherChild, Existing: TNodeID;
+    ChildName: string;
+  begin
+    Kids := TFPList.Create;
+    try
+      Other.ChildrenOf(OtherDirectory, Kids);
+      for I := 0 to Kids.Count - 1 do
+      begin
+        OtherChild := TNodeID(PtrUInt(Kids[I]));
+        ChildName := Other.NameOf(OtherChild);
+        Existing := ChildNamed(Into, ChildName);
+        if Other.IsDirectory(OtherChild) and (Existing <> NoNode) then
+        begin
+          if IsDirectory(Existing) then
+            MergeChildren(Existing, OtherChild)
+          else
+          begin
+            RemoveChildNamed(Into, ChildName);
+            AdoptSubtree(Other, OtherChild, Into);
+          end;
+        end
+        else if Existing = NoNode then
+          AdoptSubtree(Other, OtherChild, Into);
+      end;
+    finally
+      Kids.Free;
+    end;
+  end;
+
+begin
+  MergeChildren(Directory, RootID);
+end;
+
+procedure TFileTree.SetRootName(const Name: string);
+begin
+  FNames[RootID] := Name;
 end;
 
 procedure TFileTree.AdoptSubtree(Other: TFileTree; OtherNode, Parent: TNodeID);

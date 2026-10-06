@@ -20,10 +20,12 @@ type
 { Scans Path without leaving AllowedDevices plus Path's own device
   (TraversalScanner.swift: allowedDevices.union([rootDevice])). When
   IsCancelled returns True the scan stops and the partial tree is returned;
-  callers discard it, as ScanEngine.swift does. }
+  callers discard it, as ScanEngine.swift does. When Unreadable is given
+  it receives the number of directories that could not be listed, the
+  root included (ScanMetrics.swift unreadableDirectories). }
 function ScanPath(const Path: string; Progress: TScanProgress = nil;
   const AllowedDevices: TDeviceSet = nil;
-  IsCancelled: TScanCancelled = nil): TFileTree;
+  IsCancelled: TScanCancelled = nil; Unreadable: PInteger = nil): TFileTree;
 { Append a fresh scan of Path under ParentID (ParentID must already exist). }
 function ScanInto(Tree: TFileTree; ParentID: TNodeID; const Path: string;
   Progress: TScanProgress = nil; const AllowedDevices: TDeviceSet = nil): Boolean;
@@ -95,7 +97,7 @@ end;
 
 function ScanPath(const Path: string; Progress: TScanProgress;
   const AllowedDevices: TDeviceSet;
-  IsCancelled: TScanCancelled): TFileTree;
+  IsCancelled: TScanCancelled; Unreadable: PInteger): TFileTree;
 var
   Devices: TDeviceSet;
   Tree: TFileTree;
@@ -118,10 +120,16 @@ begin
   Seen := THardLinkSeen.Create;
   Bytes := 0;
   Items := 0;
+  if Unreadable <> nil then
+    Unreadable^ := 0;
   try
     RootDevice := VolumeDeviceOf(Path);
     if RootDevice = 0 then
+    begin
+      if Unreadable <> nil then
+        Inc(Unreadable^);
       Exit(Tree);
+    end;
     Devices := Copy(AllowedDevices);
     IncludeDevice(Devices, RootDevice);
 
@@ -139,7 +147,11 @@ begin
 
       Read := ReadDirectory(Item.Path, Devices);
       if Read.Kind <> drkContents then
+      begin
+        if (Read.Kind = drkUnreadable) and (Unreadable <> nil) then
+          Inc(Unreadable^);
         Continue;
+      end;
 
       Prefix := IncludeTrailingPathDelimiter(Item.Path);
 

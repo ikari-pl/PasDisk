@@ -157,6 +157,35 @@ begin
     'a non-root scan allows only its own device');
 end;
 
+{ ScanMetrics.swift unreadableDirectories: folders that cannot be listed,
+  the root included. }
+procedure TestUnreadable;
+{$IFDEF UNIX}
+var
+  T: TFileTree;
+  Count: Integer;
+  Base: string;
+{$ENDIF}
+begin
+  {$IFDEF UNIX}
+  Base := Root + '/unreadable';
+  ForceDirectories(Base + '/locked/inner');
+  ForceDirectories(Base + '/open');
+  fpChmod(PChar(Base + '/locked'), &000);
+  T := ScanPath(Base, nil, nil, nil, @Count);
+  T.Free;
+  Expect(Count = 1, Format('one locked folder counts once (%d)', [Count]));
+  T := ScanPath(Base + '/locked', nil, nil, nil, @Count);
+  Expect((Count = 1) and (T.NodeCount = 1),
+    Format('an unreadable root counts and yields no items (%d)', [Count]));
+  T.Free;
+  T := ScanPath(Base + '/open', nil, nil, nil, @Count);
+  T.Free;
+  Expect(Count = 0, 'a readable tree has no unreadable folders');
+  fpChmod(PChar(Base + '/locked'), &755);
+  {$ENDIF}
+end;
+
 begin
   Fail := False;
   Root := ResolveRealPath(GetTempDir(False)) + '/od_trav_' + IntToStr(GetProcessID);
@@ -207,6 +236,7 @@ begin
       Kids.Free;
       T.Free;
     end;
+    TestUnreadable;
   finally
     Cleanup(Root);
   end;

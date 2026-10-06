@@ -303,6 +303,54 @@ begin
   end;
 end;
 
+{ FileTree.swift removeChild(named:of:) and merge(_:into:). }
+procedure TestMergeAndRemoveChild;
+var
+  A, B: TFileTree;
+  AX, BX, BY, Node, Detached: TNodeID;
+begin
+  A := TFileTree.Create('/');
+  B := TFileTree.Create('/mnt');
+  try
+    AX := A.AddNode('x', RootID, 0, True);
+    A.AddNode('a', AX, 1, False);
+    A.AddNode('y', RootID, 5, False);
+    A.AddNode('keep', RootID, 7, False);
+
+    BX := B.AddNode('x', RootID, 0, True);
+    B.AddNode('b', BX, 2, False);
+    B.AddNode('a', BX, 9, False);
+    BY := B.AddNode('y', RootID, 0, True);
+    B.AddNode('z', BY, 3, False);
+    B.AddNode('keep', RootID, 100, False);
+    B.AddNode('new', RootID, 4, False);
+    B.RollUpDirectorySizes;
+
+    A.Merge(B, RootID);
+    A.ResetDirectorySizes;
+    A.RollUpDirectorySizes;
+
+    Expect(A.SizeOf(A.ChildNamed(AX, 'a')) = 1, 'existing file in a merged directory is kept');
+    Expect(A.ChildNamed(AX, 'b') <> NoNode, 'new file in a merged directory is added');
+    Node := A.ChildNamed(RootID, 'y');
+    Expect((Node <> NoNode) and A.IsDirectory(Node) and (A.ChildNamed(Node, 'z') <> NoNode),
+      'a file in the way of a directory is replaced by it');
+    Expect(A.SizeOf(A.ChildNamed(RootID, 'keep')) = 7, 'an existing file is not overwritten by a file');
+    Expect(A.ChildNamed(RootID, 'new') <> NoNode, 'new top-level entry is added');
+    Expect(A.SizeOf(RootID) = 1 + 2 + 3 + 7 + 4, Format('roll-up after merge (%d)', [A.SizeOf(RootID)]));
+
+    Detached := A.RemoveChildNamed(RootID, 'x');
+    Expect((Detached = AX) and (A.ChildNamed(RootID, 'x') = NoNode) and
+      (A.ParentOf(AX) = NoNode), 'removeChild detaches the named child');
+    Expect(A.RemoveChildNamed(RootID, 'missing') = NoNode, 'removeChild of a missing name');
+    A.SetRootName('/renamed');
+    Expect(A.PathOf(A.ChildNamed(RootID, 'new')) = '/renamed/new', 'root name sets the path prefix');
+  finally
+    A.Free;
+    B.Free;
+  end;
+end;
+
 begin
   Failures := 0;
   TestRollUp;
@@ -311,6 +359,7 @@ begin
   TestLoadHardLinkOrder;
   TestPathRoundTrip;
   TestSortedChildren;
+  TestMergeAndRemoveChild;
   if Failures = 0 then
   begin
     WriteLn('All FileTree tests passed.');
