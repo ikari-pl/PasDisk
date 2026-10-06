@@ -60,6 +60,10 @@ type
     FListPanel: TPanel;
     FListHeader: TLabel;
     FList: TListBox;
+    { Largest size among the listed children (ScanResultsView.swift maxSize)
+      and the row under the pointer, -1 for none. }
+    FListMaxSize: Int64;
+    FListHover: Integer;
     FChartPanel: TPanel;
     FChart: TRingsChart;
     FCollectorPanel: TPanel;
@@ -99,6 +103,11 @@ type
     procedure FolderClick(Sender: TObject);
     procedure RefreshVolClick(Sender: TObject);
     procedure ListDblClick(Sender: TObject);
+    procedure ListDrawItem(Control: TWinControl; Index: Integer;
+      ARect: TRect; State: TOwnerDrawState);
+    procedure ListMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+    procedure ListMouseLeave(Sender: TObject);
+    procedure SetListHover(Index: Integer);
     procedure ChartSelect(Sender: TObject; const APath: string; IsCenter: Boolean);
     procedure DisksClick(Sender: TObject);
     procedure BackClick(Sender: TObject);
@@ -225,6 +234,10 @@ begin
   WatchAppearanceChanges(@OnThemeChange);
   ShowPicker;
   RefreshVolumes;
+  { Screenshots and automation: OPENDISK_GUI_SCAN=<folder> scans that folder
+    at launch instead of waiting for the folder dialog. }
+  if GetEnvironmentVariable('OPENDISK_GUI_SCAN') <> '' then
+    StartScan(GetEnvironmentVariable('OPENDISK_GUI_SCAN'), '', 0, 0);
 end;
 
 procedure TMainForm.BuildUI;
@@ -394,9 +407,13 @@ begin
   FList.BorderStyle := bsNone;
   FList.Color := CPanel;
   FList.Font.Color := CInk;
-  FList.Font.Name := 'Menlo';
-  FList.Font.Size := 11;
+  FList.Style := lbOwnerDrawFixed;
+  FList.ItemHeight := 36;
+  FList.OnDrawItem := @ListDrawItem;
+  FList.OnMouseMove := @ListMouseMove;
+  FList.OnMouseLeave := @ListMouseLeave;
   FList.OnDblClick := @ListDblClick;
+  FListHover := -1;
 
   FChartPanel := TPanel.Create(Self);
   FChartPanel.Parent := FBody;
@@ -793,6 +810,8 @@ begin
     Node := ResolveNode(FTree, FRootPath, FCurrentPath);
     if Node = NoNode then
       Exit;
+    FListMaxSize := 0;
+    FListHover := -1;
     Sorted := TFPList.Create;
     try
       FTree.ChildrenSortedForDisplay(Node, Sorted);
@@ -803,11 +822,11 @@ begin
           Continue;
         if FCollector.Contains(FTree.PathOf(Child)) then
           Continue;
-        Line := Format('%10s   %s',
-          [FormatFileSize(FTree.SizeOf(Child)), FTree.NameOf(Child)]);
-        if FTree.IsDirectory(Child) then
-          Line := Line + DirectorySeparator;
+        { The name doubles as the accessible text of the owner-drawn row. }
+        Line := FTree.NameOf(Child);
         FList.Items.AddObject(Line, TObject(PtrUInt(Child)));
+        if FTree.SizeOf(Child) > FListMaxSize then
+          FListMaxSize := FTree.SizeOf(Child);
       end;
     finally
       Sorted.Free;
@@ -838,6 +857,194 @@ begin
       [FormatFileSize(FCollector.TotalBytes), FCollector.Count]);
     FDeleteButton.Enabled := True;
   end;
+end;
+
+{ FolderRowView.swift: name (medium for folders) over an item count, a 46x4
+  size capsule against the largest sibling, the size right-aligned in
+  monospaced digits, a chevron for folders; rounded hover / selection. }
+procedure TMainForm.ListDrawItem(Control: TWinControl; Index: Integer;
+  ARect: TRect; State: TOwnerDrawState);
+const
+  PadX = 8;
+  CapsuleW = 46;
+  CapsuleH = 4;
+  SizeW = 66;
+  ChevronW = 12;
+  Gap = 10;
+  NameLine = 16;
+var
+  LB: TListBox;
+  C: TCanvas;
+  Node: TNodeID;
+  IsDir, Selected: Boolean;
+  Bg, Ink, Secondary, Tertiary: TColor;
+  Row, Cap, Fill: TRect;
+  RowName, Detail, SizeText: string;
+  NameTop, Right, SizeLeft, CapLeft, MidY, W: Integer;
+  Frac: Double;
+begin
+  LB := Control as TListBox;
+  C := LB.Canvas;
+  if (FTree = nil) or (Index < 0) or (Index >= LB.Items.Count) then
+    Exit;
+  Node := TNodeID(PtrUInt(LB.Items.Objects[Index]));
+  IsDir := FTree.IsDirectory(Node);
+  Selected := odSelected in State;
+
+  Bg := ColorToRGB(CPanel);
+  C.Brush.Style := bsSolid;
+  C.Brush.Color := Bg;
+  C.FillRect(ARect);
+
+  Row := Rect(ARect.Left + 4, ARect.Top + 2, ARect.Right - 4, ARect.Bottom - 2);
+  if Selected or (Index = FListHover) then
+  begin
+    if Selected then
+      C.Brush.Color := ColorToRGB(clHighlight)
+    else
+    begin
+      { Hover: a faint wash of the secondary colour over the panel. }
+      Ink := SecondaryTextColor(CPanel);
+      C.Brush.Color := RGBToColor(
+        (Red(Ink) + 7 * Red(Bg)) div 8,
+        (Green(Ink) + 7 * Green(Bg)) div 8,
+        (Blue(Ink) + 7 * Blue(Bg)) div 8);
+    end;
+    C.Pen.Style := psClear;
+    C.RoundRect(Row, 16, 16);
+    C.Pen.Style := psSolid;
+    if Selected then
+      Bg := ColorToRGB(clHighlight);
+  end;
+
+  if Selected then
+    Ink := ColorToRGB(clHighlightText)
+  else
+    Ink := ColorToRGB(CInk);
+  Secondary := SecondaryTextColor(Bg);
+  Tertiary := RGBToColor(
+    (Red(Secondary) * 2 + Red(Bg)) div 3,
+    (Green(Secondary) * 2 + Green(Bg)) div 3,
+    (Blue(Secondary) * 2 + Blue(Bg)) div 3);
+  if Selected then
+  begin
+    Secondary := Ink;
+    Tertiary := Ink;
+  end;
+
+  MidY := (Row.Top + Row.Bottom) div 2;
+  Right := Row.Right - PadX;
+
+  { chevron }
+  C.Brush.Style := bsClear;
+  if IsDir then
+  begin
+    C.Pen.Color := Tertiary;
+    C.Pen.Width := 1;
+    C.MoveTo(Right - ChevronW + 4, MidY - 4);
+    C.LineTo(Right - ChevronW + 8, MidY);
+    C.LineTo(Right - ChevronW + 4, MidY + 4);
+  end;
+  Right := Right - ChevronW - Gap;
+
+  { size, right-aligned in its fixed column }
+  SizeText := FormatFileSize(FTree.SizeOf(Node));
+  { System font: CLAUDE.md forbids a monospaced font in the file list, and
+    LCL cannot request monospaced digits; the fixed right-aligned column
+    keeps sizes from shifting. }
+  C.Font.Name := 'default';
+  C.Font.Size := 12;
+  C.Font.Style := [];
+  C.Font.Color := Secondary;
+  SizeLeft := Right - SizeW;
+  C.TextOut(Right - C.TextWidth(SizeText), MidY - C.TextHeight(SizeText) div 2, SizeText);
+  Right := SizeLeft - Gap;
+
+  { size capsule against the largest sibling }
+  if FListMaxSize > 0 then
+  begin
+    Frac := FTree.SizeOf(Node) / FListMaxSize;
+    if Frac > 1 then
+      Frac := 1;
+    CapLeft := Right - CapsuleW;
+    Cap := Rect(CapLeft, MidY - CapsuleH div 2, Right, MidY + CapsuleH div 2);
+    C.Brush.Style := bsSolid;
+    C.Pen.Style := psClear;
+    C.Brush.Color := Tertiary;
+    C.RoundRect(Cap, CapsuleH, CapsuleH);
+    W := Round(CapsuleW * Frac);
+    if W < 3 then
+      W := 3;
+    Fill := Rect(CapLeft, Cap.Top, CapLeft + W, Cap.Bottom);
+    C.Brush.Color := Secondary;
+    C.RoundRect(Fill, CapsuleH, CapsuleH);
+    C.Pen.Style := psSolid;
+    Right := CapLeft - Gap;
+  end;
+
+  { name and item count }
+  C.Brush.Style := bsClear;
+  C.Font.Name := 'default';
+  C.Font.Size := 13;
+  if IsDir then
+    C.Font.Style := [fsBold]
+  else
+    C.Font.Style := [];
+  C.Font.Color := Ink;
+  RowName := FTree.NameOf(Node);
+  Detail := '';
+  if IsDir and (FTree.ChildCount(Node) > 0) then
+    Detail := Format('%d items', [FTree.ChildCount(Node)]);
+  { Fixed metrics: a 13 pt name line, 2 pt spacing, an 11 pt caption
+    (FolderRowView VStack spacing 2); canvas TextHeight is not reliable
+    before the font is realized. }
+  if Detail = '' then
+    NameTop := MidY - NameLine div 2
+  else
+    NameTop := Row.Top + 1;
+  { Clip horizontally only: descenders need the space below the line. }
+  C.TextRect(Rect(Row.Left + PadX, Row.Top, Right, Row.Bottom),
+    Row.Left + PadX, NameTop, RowName);
+  if Detail <> '' then
+  begin
+    C.Font.Size := 10;
+    C.Font.Style := [];
+    C.Font.Color := Tertiary;
+    C.TextOut(Row.Left + PadX, NameTop + NameLine + 2, Detail);
+  end;
+end;
+
+procedure TMainForm.SetListHover(Index: Integer);
+var
+  Old: Integer;
+  R: TRect;
+begin
+  if Index = FListHover then
+    Exit;
+  Old := FListHover;
+  FListHover := Index;
+  { Repaint only the two rows whose hover state changed. }
+  if (Old >= 0) and (Old < FList.Items.Count) then
+  begin
+    R := FList.ItemRect(Old);
+    InvalidateRect(FList.Handle, @R, False);
+  end;
+  if (Index >= 0) and (Index < FList.Items.Count) then
+  begin
+    R := FList.ItemRect(Index);
+    InvalidateRect(FList.Handle, @R, False);
+  end;
+end;
+
+procedure TMainForm.ListMouseMove(Sender: TObject; Shift: TShiftState;
+  X, Y: Integer);
+begin
+  SetListHover(FList.ItemAtPos(Point(X, Y), True));
+end;
+
+procedure TMainForm.ListMouseLeave(Sender: TObject);
+begin
+  SetListHover(-1);
 end;
 
 procedure TMainForm.ListDblClick(Sender: TObject);
