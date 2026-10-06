@@ -322,7 +322,9 @@ begin
 
   FDisksBtn := TButton.Create(Self);
   FDisksBtn.Parent := FNav;
-  FDisksBtn.Caption := 'Disks';
+  FDisksBtn.Caption := 'Unmount';
+  FDisksBtn.Hint := 'Unmount and clear scan data (Cmd-[)';
+  FDisksBtn.ShowHint := True;
   FDisksBtn.Left := 16;
   FDisksBtn.Top := 12;
   FDisksBtn.Width := 72;
@@ -349,6 +351,8 @@ begin
   FRefreshBtn := TButton.Create(Self);
   FRefreshBtn.Parent := FNav;
   FRefreshBtn.Caption := 'Refresh';
+  FRefreshBtn.Hint := 'Rescan the current folder (Cmd-R)';
+  FRefreshBtn.ShowHint := True;
   FRefreshBtn.Width := 88;
   FRefreshBtn.Height := 28;
   FRefreshBtn.Top := 12;
@@ -657,7 +661,7 @@ begin
       RefreshCollector;
     Key := 0;
   end
-  else if (Key = VK_LEFT) and (ssMeta in Shift) and (FMode = umAnalysis) then
+  else if (Key = VK_OEM_4) and (ssMeta in Shift) and (FMode in [umAnalysis, umScanning]) then
   begin
     DisksClick(nil);
     Key := 0;
@@ -702,7 +706,7 @@ begin
   FMode := umScanning;
   ShowAnalysis;
   FCrumbBar.SetPath(Expanded, FRootName, Expanded);
-  Caption := FRootName + ' — OpenDisk';
+  Caption := FRootName;
   FStatus.SimpleText := 'Scanning ' + Expanded + '…';
   { Disks stays enabled: it cancels the scan. }
   FBackBtn.Enabled := False;
@@ -797,6 +801,8 @@ begin
   Chart := TChartItem.Build(FTree, Node, NodeName, APath);
   FChart.TakeRoot(Chart);
   FCrumbBar.SetPath(FRootPath, FRootName, APath);
+  { DiskAnalysisView.swift windowTitle: the folder being shown. }
+  Caption := NodeName;
   FListHeader.Caption := 'Largest in ' + NodeName + '  ·  ' +
     FormatFileSize(FTree.SizeOf(Node));
   RefreshList;
@@ -1123,8 +1129,18 @@ begin
   FMode := umPicker;
 end;
 
+{ DiskAnalysisView.swift requestUnmount / unmount: confirm, then drop the
+  scan and return to disk selection (the disk is not ejected). }
 procedure TMainForm.DisksClick(Sender: TObject);
 begin
+  if QuestionDlg('Unmount ' + FRootName + '?',
+    'This clears the current scan data and returns to disk selection. ' +
+    'It does not eject the disk from macOS.', mtConfirmation,
+    { Swift: Unmount is the destructive action, Cancel has the cancel role;
+      a destructive confirmation defaults to the safe answer (Return and
+      Escape both cancel). }
+    [mrOK, 'Unmount', mrCancel, 'Cancel', 'IsDefault', 'IsCancel'], 0) <> mrOK then
+    Exit;
   CancelScan;
   FreeAndNil(FTree);
   FChart.Root := nil;
@@ -1147,10 +1163,19 @@ begin
   ShowNode(Prev);
 end;
 
+{ DiskAnalysisView.swift refresh(): a new scan rooted at the folder being
+  shown, which becomes the scan root. }
 procedure TMainForm.RefreshClick(Sender: TObject);
+var
+  ScanName: string;
 begin
-  if FRootPath <> '' then
-    StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+  if FCurrentPath = '' then
+    Exit;
+  if FCurrentPath = FRootPath then
+    ScanName := FRootName
+  else
+    ScanName := ExtractFileName(ExcludeTrailingPathDelimiter(FCurrentPath));
+  StartScan(FCurrentPath, ScanName, FRootTotal, FRootFree);
 end;
 
 procedure TMainForm.DeleteClick(Sender: TObject);
