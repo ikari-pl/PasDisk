@@ -214,12 +214,14 @@ var
   R, G, B: Integer;
   Peak: Integer;
 begin
+  { ChartPalette.level / levelHighlighted: fixed light greys (#D3D6D1,
+    #E0E2DD), not the accent colour. }
   if Depth = 0 then
   begin
     if Highlighted then
-      Exit(clHighlight)
+      Exit(TColor($00DDE2E0))
     else
-      Exit(clBtnFace);
+      Exit(TColor($00D1D6D3));
   end;
   Clamped := ColorPosition;
   if not (Clamped = Clamped) then

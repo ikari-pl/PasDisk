@@ -103,7 +103,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 |---|---|---|---|---|---|---|
 | ChartItem tree (max depth 5, min fraction 0.0015, `hasHiddenChildren`) | Models/ChartItem.swift:23-82 | units/ChartItem.pas:45-46, 75-140 | Done | Done | od-31j.2 | Pascal declares `ckSynthetic` but never builds one (see od-31j.20). |
 | Rings layout geometry + hit test | Views/Charts/RingsChartLayout.swift:4-91 | units/RingsLayout.pas:103-194 | Done | Done | od-31j.2 | |
-| Palette (6 hues, 3 bands, depth intensity, highlight normalization) | Views/Charts/ChartPalette.swift:3-55 | gui/RingsChart.pas:116-167; units/RingsSVG.pas:27-65 | Done | Partial | od-31j.18.10 | The center disk is dark (`$0038322E`) in the GUI; Swift uses light grey `#D3D6D1`/`#E0E2DD`. The GUI also draws a hardcoded dark gradient background (RingsChart.pas:169-182). |
+| Palette (6 hues, 3 bands, depth intensity, highlight normalization) | Views/Charts/ChartPalette.swift:3-55 | gui/RingsChart.pas:116-167; units/RingsSVG.pas:27-65 | Done | Done | od-31j.18.10 | The center disk uses ChartPalette.level / levelHighlighted (#D3D6D1 / #E0E2DD) — it had used clBtnFace and the accent on hover; the background is the plain window colour. |
 | Antialiased arc paths | Views/Charts/RingsChartView.swift:210-234 | gui/PlatformChartCanvas.pas (Core Graphics arcs) | N/A | Done | od-31j.18.11 | ba740bb. |
 | Static layer cache; redraw only the hover overlay | RingsChartView.swift:17-23, 148-160 | gui/RingsChart.pas; PlatformChartCanvas.pas (TChartCanvasCache) | N/A | Done | od-31j.18.14 | ba740bb: cached at the window's backing scale; rebuilt on resize, scale or appearance change. |
 | Hover highlight of a segment | RingsChartView.swift:26-34, 128-145 | gui/RingsChart.pas:295, 299-327 | N/A | Done | od-31j.18.4 | |
@@ -231,8 +231,8 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 80 |
-| Partial | 3 | 6 |
+| Done | 41 | 81 |
+| Partial | 3 | 5 |
 | Missing | 1 | 7 |
 | N/A | 58 | 10 |
 | Unverified | 2 | 2 |
