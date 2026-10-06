@@ -110,12 +110,18 @@ type
       the drag tint fades in and out; FTintColor is the last one shown. }
     FTint: TAnimatedValue;
     FTintColor: TColor;
+    { .contentTransition(.numericText()) with .spring(0.3) on the count:
+      the total rolls from the old text to the new (up when it grows). }
+    FTotalRoll: TAnimatedValue;
+    FOldTotalText: string;
+    FRollUp: Boolean;
     function TintColorFor(Phase: TCollectorPhase): TColor;
     procedure ShowOverlay(O: TCollectorOverlay; const R: TRect);
     procedure HideOverlay(O: TCollectorOverlay);
     procedure PlaceOverlay(O: TCollectorOverlay; NowMs: QWord);
     procedure MotionFrame(Sender: TObject);
     procedure StartMotion;
+    procedure DrawRollingTotal(C: TCanvas; X, Y: Integer; const NewText: string);
     procedure CollapseTick(Sender: TObject);
     procedure NoticeTick(Sender: TObject);
     procedure SpinTick(Sender: TObject);
@@ -684,7 +690,7 @@ begin
         C.Font.Style := [fsBold];
         C.Font.Color := Ink;
         Y := Panel.Top + PadV;
-        C.TextOut(X, Y, FormatFileSize(TotalBytes));
+        DrawRollingTotal(C, X, Y, FormatFileSize(TotalBytes));
         Inc(Y, C.TextHeight('Ag') + 1);
         C.Font.Size := CaptionSize;
         C.Font.Style := [];
@@ -874,6 +880,38 @@ begin
   end;
 end;
 
+{ numericText: while rolling, the old total leaves its line (up when the
+  value grew, down when it shrank) as the new one comes in, both clipped
+  to the line. }
+procedure TCollectorBarView.DrawRollingTotal(C: TCanvas; X, Y: Integer;
+  const NewText: string);
+var
+  P: Double;
+  H, Shift, Dir: Integer;
+  Line: TRect;
+begin
+  P := ValueAt(FTotalRoll, GetTickCount64);
+  if (P >= 1) or (FOldTotalText = '') then
+  begin
+    C.TextOut(X, Y, NewText);
+    Exit;
+  end;
+  H := C.TextHeight('Ag');
+  Line := Rect(X, Y, X + Max(C.TextWidth(NewText), C.TextWidth(FOldTotalText)) + 2, Y + H);
+  if GetEnvironmentVariable('OPENDISK_DEBUG_MOTION') = '1' then
+  begin
+    WriteLn(Format('roll %.3f: "%s" -> "%s"', [P, FOldTotalText, NewText]));
+    Flush(Output);
+  end;
+  if FRollUp then
+    Dir := -1
+  else
+    Dir := 1;
+  Shift := Round(P * H);
+  C.TextRect(Line, X, Y + Dir * Shift, FOldTotalText);
+  C.TextRect(Line, X, Y + Dir * Shift - Dir * H, NewText);
+end;
+
 procedure TCollectorBarView.StartMotion;
 begin
   if FMotion = nil then
@@ -887,8 +925,9 @@ var
   Moving: Boolean;
 begin
   NowMs := GetTickCount64;
-  Moving := not AtRest(FTint, NowMs);
-  if Moving or (FTint.StartMs + QWord(FTint.DurationMs) + 50 > NowMs) then
+  Moving := not AtRest(FTint, NowMs) or not AtRest(FTotalRoll, NowMs);
+  if Moving or (FTint.StartMs + QWord(FTint.DurationMs) + 50 > NowMs) or
+    (FTotalRoll.StartMs + QWord(FTotalRoll.DurationMs) + 50 > NowMs) then
     Invalidate;
   if (FList <> nil) and FList.Visible then
   begin
@@ -1050,8 +1089,20 @@ begin
 end;
 
 procedure TCollectorBarView.SetItems(const Items: TCollectorItems);
+var
+  OldTotal: Int64;
 begin
+  OldTotal := TotalBytes;
   FItems := Copy(Items);
+  if (OldTotal <> TotalBytes) and (FormatFileSize(OldTotal) <> FormatFileSize(TotalBytes)) and
+    (OldTotal > 0) and (TotalBytes > 0) and not ReduceMotion then
+  begin
+    FOldTotalText := FormatFileSize(OldTotal);
+    FRollUp := TotalBytes > OldTotal;
+    FTotalRoll := AnimatedAt(0);
+    Retarget(FTotalRoll, 1, GetTickCount64, 300, eaSpring);
+    StartMotion;
+  end;
   UpdateHeight;
   if WantsList then
     UpdateOverlays

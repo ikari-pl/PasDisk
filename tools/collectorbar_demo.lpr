@@ -3,9 +3,29 @@ program collectorbar_demo;
 {$mode objfpc}{$H+}
 
 uses
-  Interfaces, Forms, Controls, Graphics, CollectorBarView, SysUtils;
+  Interfaces, Forms, Controls, Graphics, ExtCtrls, CollectorBarView, SysUtils;
+
+type
+  TRollTimer = class(TTimer)
+  public
+    Bar: TCollectorBarView;
+    procedure Tick(Sender: TObject);
+  end;
+
+procedure TRollTimer.Tick(Sender: TObject);
+var
+  More: TCollectorItems;
+begin
+  Enabled := False;
+  SetLength(More, 3);
+  More[0].Name := 'report.pdf'; More[0].Path := '/tmp/report.pdf'; More[0].Size := 420000;
+  More[1].Name := 'Build'; More[1].Path := '/tmp/Build'; More[1].Size := 2400000; More[1].IsDirectory := True;
+  More[2].Name := 'archive.zip'; More[2].Path := '/tmp/archive.zip'; More[2].Size := 8200000;
+  Bar.SetItems(More);
+end;
 
 var
+  Roll: TRollTimer;
   Form: TForm;
   Bar: TCollectorBarView;
   Items: TCollectorItems;
@@ -42,5 +62,16 @@ begin
   else if State = 'notice' then Bar.ShowNotice('“System” is protected by macOS and can’t be deleted')
   else if State = 'empty' then Bar.SetPhase(cbIdle)
   else Bar.SetPhase(cbIdle);
+  { 'roll': two items, then a third 0.8 s later (the total rolls). }
+  if State = 'roll' then
+  begin
+    SetLength(Items, 2);
+    Bar.SetItems(Items);
+    Roll := TRollTimer.Create(Form);
+    Roll.Bar := Bar;
+    Roll.Interval := 800;
+    Roll.OnTimer := @Roll.Tick;
+    Roll.Enabled := True;
+  end;
   Form.Show; Application.Run;
 end.
