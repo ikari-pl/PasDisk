@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <General><Title Value="OpenDisk Arc Text Demo"/></General>
+    <RequiredPackages><Item><PackageName Value="LCL"/></Item></RequiredPackages>
+    <Units><Unit><Filename Value="arctext_demo.lpr"/><IsPartOfProject Value="True"/></Unit></Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Target><Filename Value="arctext_demo"/></Target>
+    <SearchPaths><OtherUnitFiles Value="../src/gui;../src/units"/><UnitOutputDirectory Value="lib"/></SearchPaths>
+  </CompilerOptions>
+</CONFIG>

@@ -50,10 +50,37 @@ procedure FillAnnularSectorFallback(ACanvas: TCanvas; CX, CY, InnerR, OuterR,
 procedure StrokeContinuedEdge(ACanvas: TCanvas; CX, CY, Radius, A0, A1: Double;
   Color: TColor; Width: Double);
 
+procedure DrawTextOnArc(ACanvas: TCanvas; const Text: string; CX, CY,
+  Radius, MidAngle: Double; Color: TColor; FontSize: Double; Flip: Boolean);
+
 implementation
 
 {$IFDEF DARWIN}
 uses CocoaGDIObjects;
+
+type
+  CTFontRef = Pointer;
+  CTLineRef = Pointer;
+  CFAttributedStringRef = Pointer;
+  CFDictionaryRef = Pointer;
+  CFTypeRef = Pointer;
+
+function CTFontCreateWithName(Name: CFStringRef; Size: CGFloat;
+  Matrix: Pointer): CTFontRef; cdecl; external 'CoreText';
+function CTLineCreateWithAttributedString(StringRef: CFAttributedStringRef): CTLineRef;
+  cdecl; external 'CoreText';
+function CTLineGetTypographicBounds(Line: CTLineRef; Options: CFOptionFlags;
+  Ascent, Descent, Leading: Pointer): Double; cdecl; external 'CoreText';
+procedure CTLineDraw(Line: CTLineRef; Context: CGContextRef); cdecl; external 'CoreText';
+procedure CFRelease(Obj: CFTypeRef); cdecl; external 'CoreFoundation';
+function CFAttributedStringCreate(Alloc: Pointer; Str: CFStringRef;
+  Attrs: CFDictionaryRef): CFAttributedStringRef; cdecl; external 'CoreFoundation';
+function CFDictionaryCreate(Alloc: Pointer; Keys, Values: Pointer; NumValues: CFIndex;
+  KeyCallbacks, ValueCallbacks: Pointer): CFDictionaryRef; cdecl; external 'CoreFoundation';
+function CFStringCreateWithCString(Alloc: Pointer; CStr: PChar;
+  Encoding: CFStringEncoding): CFStringRef; cdecl; external 'CoreFoundation';
+var
+  kCTFontAttributeName: CFStringRef; external 'CoreText';
 
 procedure objc_msgSend; cdecl; external 'objc' name 'objc_msgSend';
 function objc_getClass(Name: PAnsiChar): Pointer; cdecl; external 'objc';
@@ -86,10 +113,91 @@ begin
   if (ACanvas <> nil) and (ACanvas.Handle <> 0) then
     Result := TCocoaContext(ACanvas.Handle).CGContext;
 end;
+
+procedure DrawTextOnArc(ACanvas: TCanvas; const Text: string; CX, CY,
+  Radius, MidAngle: Double; Color: TColor; FontSize: Double; Flip: Boolean);
+var
+  Ctx: CGContextRef;
+  FontName, CharString: CFStringRef;
+  Font: CTFontRef;
+  Attrs, AttrKey, AttrValue: CFDictionaryRef;
+  Lines: array of CTLineRef;
+  Widths: array of Double;
+  Total, Cumulative, Advance, Angle, A, Ascent, Descent, Leading: Double;
+  I: Integer;
+  RGB: TColor;
+  OneChar: string;
+begin
+  Ctx := CanvasCGContext(ACanvas);
+  if (Ctx = nil) or (Text = '') or (Radius <= 0) then Exit;
+  FontName := CFStringCreateWithCString(nil, 'Helvetica', kCFStringEncodingASCII);
+  Font := CTFontCreateWithName(FontName, FontSize, nil);
+  CFRelease(FontName);
+  AttrKey := kCTFontAttributeName;
+  AttrValue := Font;
+  Attrs := CFDictionaryCreate(nil, @AttrKey, @AttrValue, 1, nil, nil);
+  SetLength(Lines, Length(Text));
+  SetLength(Widths, Length(Text));
+  Total := 0;
+  for I := 1 to Length(Text) do
+  begin
+    OneChar := Text[I];
+    CharString := CFStringCreateWithCString(nil, PChar(OneChar), kCFStringEncodingUTF8);
+    Lines[I - 1] := CTLineCreateWithAttributedString(
+      CFAttributedStringCreate(nil, CharString, Attrs));
+    CFRelease(CharString);
+    Widths[I - 1] := CTLineGetTypographicBounds(Lines[I - 1], 0,
+      @Ascent, @Descent, @Leading);
+    Total := Total + Widths[I - 1];
+  end;
+  RGB := ColorToRGB(Color);
+  CGContextSetRGBFillColor(Ctx, Red(RGB) / 255, Green(RGB) / 255,
+    Blue(RGB) / 255, 1);
+  CGContextSaveGState(Ctx);
+  { LCL's Cocoa context is y-down; Core Text glyphs are y-up. }
+  CGContextSetTextMatrix(Ctx, CGAffineTransformMakeScale(1, -1));
+  Cumulative := 0;
+  for I := 0 to High(Lines) do
+  begin
+    Advance := Widths[I];
+    if Flip then
+      Angle := MidAngle + (Total / 2 - Cumulative - Advance / 2) / Radius
+    else
+      Angle := MidAngle - Total / (2 * Radius) +
+        (Cumulative + Advance / 2) / Radius;
+    A := Angle + Pi / 2;
+    if Flip then A := Angle - Pi / 2;
+    CGContextSaveGState(Ctx);
+    CGContextTranslateCTM(Ctx, CX + Cos(Angle) * Radius, CY + Sin(Angle) * Radius);
+    CGContextRotateCTM(Ctx, A);
+    CGContextSetTextMatrix(Ctx, CGAffineTransformMakeScale(1, -1));
+    CGContextTranslateCTM(Ctx, -Advance / 2, Ascent / 2);
+    CTLineDraw(Lines[I], Ctx);
+    CGContextRestoreGState(Ctx);
+    Cumulative := Cumulative + Advance;
+    CFRelease(Lines[I]);
+  end;
+  CGContextRestoreGState(Ctx);
+  CFRelease(Attrs);
+  CFRelease(Font);
+end;
 {$ELSE}
 function BackingScaleFor(Control: TWinControl): Double;
 begin
   Result := 1;
+end;
+
+procedure DrawTextOnArc(ACanvas: TCanvas; const Text: string; CX, CY,
+  Radius, MidAngle: Double; Color: TColor; FontSize: Double; Flip: Boolean);
+var
+  X, Y: Integer;
+begin
+  ACanvas.Brush.Style := bsClear;
+  ACanvas.Font.Size := Round(FontSize);
+  ACanvas.Font.Color := Color;
+  X := Round(CX - ACanvas.TextWidth(Text) / 2);
+  Y := Round(CY - ACanvas.TextHeight(Text) / 2);
+  ACanvas.TextOut(X, Y, Text);
 end;
 {$ENDIF}
 

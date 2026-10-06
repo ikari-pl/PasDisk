@@ -307,9 +307,12 @@ end;
 procedure TRingsChart.DrawSegmentLabels(ACanvas: TCanvas; Seg: TRingSegment);
 var
   Mid: Double;
-  SX, SY: Integer;
-  ChordLength, LabelWidth, LabelHeight, MaxWidth: Double;
+  LabelWidth, MaxWidth: Double;
   NameText, SizeText: string;
+  Fill, Ink: TColor;
+const
+  { SwiftUI .caption2 on macOS. }
+  LabelFontSize = 10;
 begin
   if Seg.Depth = 0 then
   begin
@@ -341,24 +344,24 @@ begin
     Exit;
   end;
   Mid := (Seg.InnerRadius + Seg.OuterRadius) / 2;
-  { Swift uses curved glyphs here. This Pascal fallback keeps the label
-    horizontal, but applies the same thickness/arc visibility gates and only
-    draws when the text fits the chord at the label radius. }
-  ChordLength := 2 * Mid * Sin(Seg.Sweep / 2);
+  { RingsChartView.swift:241-260. DrawTextOnArc mirrors lines 262-277. }
   if (FLayout.Thickness >= 12) and (Seg.Sweep * Mid >= 30) then
   begin
-    ACanvas.Font.Size := 8;
-    ACanvas.Font.Color := ContrastTextColor(ColorFor(Seg.ColorPosition, Seg.Depth, False));
+    { .caption2 (10 pt on macOS) in black at 0.75 opacity: over the
+      segment's own fill that is the fill scaled to a quarter. }
+    Fill := ColorToRGB(ColorFor(Seg.ColorPosition, Seg.Depth, False));
+    Ink := RGBToColor(Red(Fill) div 4, Green(Fill) div 4, Blue(Fill) div 4);
+    ACanvas.Font.Size := LabelFontSize;
+    ACanvas.Font.Style := [];
     ACanvas.Brush.Style := bsClear;
     LabelWidth := ACanvas.TextWidth(Seg.Name);
-    LabelHeight := ACanvas.TextHeight(Seg.Name);
-    if (LabelWidth > ChordLength * 0.85) or
-      (LabelHeight > FLayout.Thickness * 0.85) then
+    { totalWidth <= arcLength * 0.85, lineHeight <= thickness * 0.85 }
+    if (LabelWidth > Seg.Sweep * Mid * 0.85) or
+      (ACanvas.TextHeight(Seg.Name) > FLayout.Thickness * 0.85) then
       Exit;
-    SX := Round(FLayout.CenterX + Cos(Seg.StartAngle + Seg.Sweep / 2) * Mid);
-    SY := Round(FLayout.CenterY + Sin(Seg.StartAngle + Seg.Sweep / 2) * Mid);
-    ACanvas.TextOut(SX - ACanvas.TextWidth(Seg.Name) div 2,
-      SY - ACanvas.TextHeight(Seg.Name) div 2, Seg.Name);
+    DrawTextOnArc(ACanvas, Seg.Name, FLayout.CenterX, FLayout.CenterY, Mid,
+      Seg.StartAngle + Seg.Sweep / 2, Ink, LabelFontSize,
+      Sin(Seg.StartAngle + Seg.Sweep / 2) > 0);
   end;
 end;
 
