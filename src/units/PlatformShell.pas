@@ -16,6 +16,9 @@ function OpenURL(const URL: string): Boolean;
 { Shows Path selected in the file manager (Finder: activateFileViewerSelecting). }
 function RevealInFileManager(const Path: string): Boolean;
 
+{ CollectedRow.openInTerminal: a terminal window in Directory. }
+function OpenTerminalAt(const Directory: string): Boolean;
+
 { Starts a new instance of this application (the .app bundle when running
   from one, else the executable). The caller then quits. }
 function LaunchNewInstance: Boolean;
@@ -59,6 +62,15 @@ function RevealInFileManager(const Path: string): Boolean;
 begin
   {$IFDEF DARWIN}
   Result := RunOpen(['-R', Path]);
+  {$ELSE}
+  Result := False;
+  {$ENDIF}
+end;
+
+function OpenTerminalAt(const Directory: string): Boolean;
+begin
+  {$IFDEF DARWIN}
+  Result := RunOpen(['-a', '/System/Applications/Utilities/Terminal.app', Directory]);
   {$ELSE}
   Result := False;
   {$ENDIF}

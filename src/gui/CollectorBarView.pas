@@ -38,6 +38,10 @@ type
   TCollectorDragOutEvent = procedure(Sender: TObject; Source: TWinControl;
     const Paths: array of string) of object;
 
+  { CollectedRow .contextMenu was asked for at ScreenPt. }
+  TCollectorRowMenuEvent = procedure(Sender: TObject; const Path: string;
+    const ScreenPt: TPoint) of object;
+
   TCollectorBarView = class;
 
   { A floating rounded panel above the footer: the staged list or the
@@ -61,6 +65,7 @@ type
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
     procedure MouseLeave; override;
     procedure MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
+    procedure DoContextPopup(MousePos: TPoint; var Handled: Boolean); override;
   public
     constructor CreateFor(Bar: TCollectorBarView; IsList: Boolean);
   end;
@@ -84,6 +89,7 @@ type
     FOnDeleteClick: TCollectorButtonEvent;
     FOnRemoveItem: TCollectorRemoveEvent;
     FOnDragOut: TCollectorDragOutEvent;
+    FOnRowMenu: TCollectorRowMenuEvent;
     { collector.draggingOut != nil: the list hides and nothing targets. }
     FDraggingOut: Boolean;
     FPressed, FDragged: Boolean;
@@ -130,6 +136,7 @@ type
     property OnDeleteClick: TCollectorButtonEvent read FOnDeleteClick write FOnDeleteClick;
     property OnRemoveItem: TCollectorRemoveEvent read FOnRemoveItem write FOnRemoveItem;
     property OnDragOut: TCollectorDragOutEvent read FOnDragOut write FOnDragOut;
+    property OnRowMenu: TCollectorRowMenuEvent read FOnRowMenu write FOnRowMenu;
   end;
 
 implementation
@@ -358,6 +365,18 @@ begin
   FHover := -1;
   Invalidate;
   FBar.ListHover(False);
+end;
+
+procedure TCollectorOverlay.DoContextPopup(MousePos: TPoint; var Handled: Boolean);
+var
+  I: Integer;
+begin
+  Handled := True;
+  if not FIsList then
+    Exit;
+  I := RowAt(MousePos.Y);
+  if (I >= 0) and Assigned(FBar.FOnRowMenu) then
+    FBar.FOnRowMenu(FBar, FBar.FItems[I].Path, ClientToScreen(MousePos));
 end;
 
 procedure TCollectorOverlay.MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer);

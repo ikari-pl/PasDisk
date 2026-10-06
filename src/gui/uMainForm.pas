@@ -200,6 +200,12 @@ type
     procedure QuickLookRow(Row: Integer);
     procedure MenuQuickLookClick(Sender: TObject);
     procedure QuickLookHookTick(Sender: TObject);
+    procedure CollectorRowMenu(Sender: TObject; const Path: string;
+      const ScreenPt: TPoint);
+    procedure CollectorPreviewClick(Sender: TObject);
+    procedure CollectorTerminalClick(Sender: TObject);
+    procedure CollectorRemoveClick(Sender: TObject);
+    procedure CollectorMenuHookTick(Sender: TObject);
     procedure MenuAddClick(Sender: TObject);
     procedure MenuAddSelectedClick(Sender: TObject);
     procedure MenuShowInFinderClick(Sender: TObject);
@@ -1392,6 +1398,14 @@ begin
         OnTimer := @ChartMenuHookTick;
         Enabled := True;
       end;
+    { Automation: OPENDISK_GUI_COLLECTOR_MENU=<index> opens a staged row's menu. }
+    if GetEnvironmentVariable('OPENDISK_GUI_COLLECTOR_MENU') <> '' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 900;
+        OnTimer := @CollectorMenuHookTick;
+        Enabled := True;
+      end;
     { Automation: OPENDISK_GUI_QUICKLOOK=<row> opens Quick Look on that row. }
     if GetEnvironmentVariable('OPENDISK_GUI_QUICKLOOK') <> '' then
       with TTimer.Create(Self) do
@@ -1933,6 +1947,7 @@ begin
   FDragOutTimer.OnTimer := @DragOutTick;
   FChart.OnDragSegment := @ChartDragSegment;
   FCollectorBar.OnDragOut := @CollectorDragOut;
+  FCollectorBar.OnRowMenu := @CollectorRowMenu;
   FList.HandleNeeded;
   EnableListRowDrag(FList, @ListDragItem, @ListDragBegan, @FileDragEnded);
   FChartPanel.HandleNeeded;
@@ -2373,6 +2388,80 @@ begin
       Paths[High(Paths)] := Item.Path;
     end;
   ShowQuickLook(Self, Paths, Start);
+end;
+
+{ CollectedRow .contextMenu: Preview, Show in Finder, Open in Terminal,
+  then Remove “name” from Collector. Preview uses the Quick Look panel
+  (Swift opens a QuickLookSheet). }
+procedure TMainForm.CollectorRowMenu(Sender: TObject; const Path: string;
+  const ScreenPt: TPoint);
+var
+  I: Integer;
+  F: TCollectedFile;
+  M: TMenuItem;
+begin
+  F := nil;
+  for I := 0 to FCollector.Count - 1 do
+    if TCollectedFile(FCollector.Items[I]).Path = Path then
+      F := TCollectedFile(FCollector.Items[I]);
+  if F = nil then
+    Exit;
+  FMenuItem.Path := F.Path;
+  FMenuItem.Name := F.Name;
+  FMenuItem.Size := F.Size;
+  FMenuItem.IsDirectory := F.IsDirectory;
+  FMenuItem.ItemCount := 0;
+  FMenuRow := -1;
+  FRowMenu.Items.Clear;
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := 'Preview';
+  M.OnClick := @CollectorPreviewClick;
+  FRowMenu.Items.Add(M);
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := 'Show in Finder';
+  M.OnClick := @MenuShowInFinderClick;
+  FRowMenu.Items.Add(M);
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := 'Open in Terminal';
+  M.OnClick := @CollectorTerminalClick;
+  FRowMenu.Items.Add(M);
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := '-';
+  FRowMenu.Items.Add(M);
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := 'Remove “' + F.Name + '” from Collector';
+  M.OnClick := @CollectorRemoveClick;
+  FRowMenu.Items.Add(M);
+  FRowMenu.PopUp(ScreenPt.X, ScreenPt.Y);
+end;
+
+procedure TMainForm.CollectorMenuHookTick(Sender: TObject);
+var
+  I: Integer;
+begin
+  (Sender as TTimer).Enabled := False;
+  I := StrToIntDef(GetEnvironmentVariable('OPENDISK_GUI_COLLECTOR_MENU'), -1);
+  if (I >= 0) and (I < FCollector.Count) then
+    CollectorRowMenu(nil, TCollectedFile(FCollector.Items[I]).Path,
+      FCollectorBar.ClientToScreen(Point(80, 0)));
+end;
+
+procedure TMainForm.CollectorPreviewClick(Sender: TObject);
+begin
+  ShowQuickLook(Self, [FMenuItem.Path], 0);
+end;
+
+procedure TMainForm.CollectorTerminalClick(Sender: TObject);
+begin
+  if FMenuItem.IsDirectory then
+    OpenTerminalAt(FMenuItem.Path)
+  else
+    OpenTerminalAt(ExtractFileDir(FMenuItem.Path));
+end;
+
+procedure TMainForm.CollectorRemoveClick(Sender: TObject);
+begin
+  CollectorRemove(nil, FMenuItem.Path);
 end;
 
 procedure TMainForm.QuickLookHookTick(Sender: TObject);
