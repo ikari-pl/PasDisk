@@ -7,7 +7,7 @@ program test_volumeroot;
 {$mode objfpc}{$H+}
 
 uses
-  SysUtils, Classes, Process, FileTree, DirReader, Traversal, Incremental,
+  SysUtils, Classes, Process, FileTree, DirTypes, PlatformDirReader, Traversal, Incremental,
   PlatformFS, Volumes;
 
 var

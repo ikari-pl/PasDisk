@@ -46,6 +46,19 @@ function UnixTimeNow: Double;
 function FileModifiedAndSize(const Path: string; out ModifiedUnix: Double;
   out Size: Int64): Boolean;
 
+{ Allocation of a directory entry itself (lstat, never followed):
+  st_blocks * 512 for regular files and symlinks, like getattrlistbulk
+  ATTR_FILE_ALLOCSIZE; 0 for anything else or a missing path. }
+function EntryAllocatedSize(const Path: string): Int64;
+
+{ Path itself is a symbolic link (lstat; a reparse point on Windows). }
+function IsSymLink(const Path: string): Boolean;
+
+{ Hard-link identity of Path itself (lstat): device, inode / file index and
+  link count. False when Path cannot be read. }
+function FileIdentity(const Path: string; out Device, FileID: QWord;
+  out LinkCount: LongWord): Boolean;
+
 { Per-user cache directory for AppName: ~/Library/Caches/<AppName> on
   macOS, the application config directory elsewhere. }
 function AppCacheDirectory(const AppName: string): string;
@@ -271,6 +284,112 @@ begin
   Size := Rec.Size;
   FindClose(Rec);
 end;
+{$ENDIF}
+
+function IsSymLink(const Path: string): Boolean;
+{$IFDEF UNIX}
+var
+  Info: Stat;
+begin
+  Result := (fpLStat(PChar(Path), Info) = 0) and fpS_ISLNK(Info.st_mode);
+end;
+{$ELSE}
+{$IFDEF WINDOWS}
+var
+  Attr: DWORD;
+begin
+  Attr := GetFileAttributesW(PWideChar(UnicodeString(Path)));
+  Result := (Attr <> INVALID_FILE_ATTRIBUTES) and
+    ((Attr and FILE_ATTRIBUTE_REPARSE_POINT) <> 0);
+end;
+{$ELSE}
+begin
+  Result := False;
+end;
+{$ENDIF}
+{$ENDIF}
+
+function EntryAllocatedSize(const Path: string): Int64;
+{$IFDEF UNIX}
+var
+  Info: Stat;
+begin
+  Result := 0;
+  if fpLStat(PChar(Path), Info) <> 0 then
+    Exit;
+  if fpS_ISREG(Info.st_mode) or fpS_ISLNK(Info.st_mode) then
+    Result := Int64(Info.st_blocks) * 512;
+end;
+{$ELSE}
+{ FindFirst wraps FindFirstFileW, which reports the directory entry itself
+  and never follows a reparse point: a symlink or junction yields its own
+  (zero) size, and a directory-like link is skipped as a directory. }
+var
+  Rec: TSearchRec;
+begin
+  Result := 0;
+  if FindFirst(Path, faAnyFile, Rec) = 0 then
+  begin
+    if (Rec.Attr and faDirectory) = 0 then
+      Result := Rec.Size;
+    FindClose(Rec);
+  end;
+end;
+{$ENDIF}
+
+function FileIdentity(const Path: string; out Device, FileID: QWord;
+  out LinkCount: LongWord): Boolean;
+{$IFDEF UNIX}
+var
+  Info: BaseUnix.Stat;
+begin
+  Result := False;
+  Device := 0;
+  FileID := 0;
+  LinkCount := 1;
+  if FpLstat(Path, Info) <> 0 then
+    Exit;
+  Device := QWord(Info.st_dev);
+  FileID := QWord(Info.st_ino);
+  LinkCount := Info.st_nlink;
+  Result := True;
+end;
+{$ELSE}
+{$IFDEF WINDOWS}
+var
+  Handle: THandle;
+  Info: BY_HANDLE_FILE_INFORMATION;
+begin
+  Result := False;
+  Device := 0;
+  FileID := 0;
+  LinkCount := 1;
+  { OPEN_REPARSE_POINT: identify a symlink / junction itself, not its
+    target (lstat semantics). }
+  Handle := CreateFile(PChar(Path), 0, FILE_SHARE_READ or FILE_SHARE_WRITE,
+    nil, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS or FILE_FLAG_OPEN_REPARSE_POINT, 0);
+  if Handle = INVALID_HANDLE_VALUE then
+    Exit;
+  try
+    if not GetFileInformationByHandle(Handle, Info) then
+      Exit;
+    Device := QWord(Info.dwVolumeSerialNumber);
+    FileID := (QWord(Info.nFileIndexHigh) shl 32) or QWord(Info.nFileIndexLow);
+    LinkCount := Info.nNumberOfLinks;
+    Result := True;
+  finally
+    CloseHandle(Handle);
+  end;
+end;
+{$ELSE}
+begin
+  Result := False;
+  Device := 0;
+  FileID := 0;
+  LinkCount := 1;
+end;
+{$ENDIF}
 {$ENDIF}
 
 function AppCacheDirectory(const AppName: string): string;

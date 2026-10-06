@@ -18,7 +18,7 @@ BUILDFLAGS = -Mobjfpc -Scghi -O2 -g -gl -Fi$(UNITDIR) -Fu$(UNITDIR) \
 
 all: opendisk
 
-opendisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirReader.pas \
+opendisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/Formatters.pas \
 		$(UNITDIR)/ChartItem.pas $(UNITDIR)/RingsLayout.pas \
 		$(UNITDIR)/RingsSVG.pas $(UNITDIR)/SearchIndex.pas \
@@ -67,16 +67,17 @@ test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 tests/test_filetree: tests/test_filetree.pas $(UNITDIR)/FileTree.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_filetree tests/test_filetree.pas
 
-tests/test_dirreader: tests/test_dirreader.pas $(UNITDIR)/DirReader.pas
+tests/test_dirreader: tests/test_dirreader.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
+		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_dirreader tests/test_dirreader.pas
 
 tests/test_scancache: tests/test_scancache.pas $(UNITDIR)/FileTree.pas \
-		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas $(UNITDIR)/ScanCache.pas \
+		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas $(UNITDIR)/ScanCache.pas \
 		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_scancache tests/test_scancache.pas
 
 tests/test_incremental: tests/test_incremental.pas $(UNITDIR)/FileTree.pas \
-		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas \
+		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Incremental.pas $(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
 		$(UNITDIR)/Volumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_incremental tests/test_incremental.pas
@@ -103,12 +104,12 @@ tests/test_ringslayout: tests/test_ringslayout.pas $(UNITDIR)/RingsLayout.pas \
 	$(FPC) $(BUILDFLAGS) -otests/test_ringslayout tests/test_ringslayout.pas
 
 tests/test_traversal: tests/test_traversal.pas $(UNITDIR)/Traversal.pas \
-		$(UNITDIR)/DirReader.pas $(UNITDIR)/FileTree.pas $(UNITDIR)/PlatformFS.pas \
+		$(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas $(UNITDIR)/FileTree.pas $(UNITDIR)/PlatformFS.pas \
 		$(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_traversal tests/test_traversal.pas
 
 tests/test_volumeroot: tests/test_volumeroot.pas $(UNITDIR)/Incremental.pas \
-		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas \
+		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Volumes.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_volumeroot tests/test_volumeroot.pas
 

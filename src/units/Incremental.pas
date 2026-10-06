@@ -13,7 +13,7 @@ unit Incremental;
 interface
 
 uses
-  SysUtils, Classes, FileTree, DirReader, Traversal, PlatformFS, Volumes;
+  SysUtils, Classes, FileTree, DirTypes, PlatformDirReader, Traversal, PlatformFS, Volumes;
 
 type
   TChangeSet = record

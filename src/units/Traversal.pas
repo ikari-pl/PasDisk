@@ -1,6 +1,6 @@
 { OpenDisk Traversal — depth-first directory scan into a FileTree.
 
-  Single-threaded MVP. DirReader uses Darwin getattrlistbulk when available. }
+  Single-threaded MVP. DirTypes, PlatformDirReader uses Darwin getattrlistbulk when available. }
 
 unit Traversal;
 
@@ -9,7 +9,7 @@ unit Traversal;
 interface
 
 uses
-  SysUtils, Classes, contnrs, FileTree, DirReader, PlatformVolumes;
+  SysUtils, Classes, contnrs, FileTree, DirTypes, PlatformDirReader, PlatformVolumes;
 
 type
   TScanProgress = procedure(BytesScanned: Int64; ItemsScanned: Integer);

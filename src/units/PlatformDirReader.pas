@@ -1,52 +1,26 @@
-{ OpenDisk DirReader — portable listing + Darwin getattrlistbulk.
+{ PlatformDirReader — list one directory, per OS.
 
-  Baseline uses SysUtils.FindFirst. On Darwin, ReadDirectory prefers
-  getattrlistbulk (ported from OpenDisk BulkDirectoryReader.swift). }
+  Darwin uses getattrlistbulk (ported from OpenDisk
+  BulkDirectoryReader.swift); elsewhere SysUtils.FindFirst with lstat
+  metadata. Result types live in DirTypes. }
 
-unit DirReader;
+unit PlatformDirReader;
 
 {$mode objfpc}{$H+}
 
 interface
 
 uses
-  SysUtils, Classes, PlatformVolumes;
-
-type
-  TStringDynArray = array of string;
-
-  TDirFileEntry = record
-    Name: string;
-    Size: Int64;
-    FileID: QWord;
-    LinkCount: LongWord;
-    Device: QWord;
-  end;
-
-  TDirectoryContents = record
-    Files: array of TDirFileEntry;
-    SubdirectoryNames: TStringDynArray;
-    MountPointNames: TStringDynArray;
-  end;
-
-  TDirectoryReadKind = (drkContents, drkCrossesDevice, drkUnreadable);
-
-  TDirectoryReadResult = record
-    Kind: TDirectoryReadKind;
-    Contents: TDirectoryContents;
-    Device: QWord;
-  end;
-
-type
-  { st_dev values a read may enter (Swift Set<dev_t>); empty = any. }
-  TDeviceSet = array of QWord;
-
-function DeviceInSet(const Devices: TDeviceSet; Device: QWord): Boolean;
-procedure IncludeDevice(var Devices: TDeviceSet; Device: QWord);
+  SysUtils, Classes, DirTypes, PlatformVolumes, PlatformFS;
 
 { BulkDirectoryReader.read(directoryAt:allowedDevices:): a directory on a
   device outside AllowedDevices reports drkCrossesDevice. }
 function ReadDirectory(const Path: string;
+  const AllowedDevices: TDeviceSet): TDirectoryReadResult;
+
+{ The FindFirst + lstat reader every non-Darwin platform uses. Exposed so
+  tests on macOS exercise it against the getattrlistbulk reader. }
+function ReadDirectoryPortable(const Path: string;
   const AllowedDevices: TDeviceSet): TDirectoryReadResult;
 
 implementation
@@ -93,98 +67,6 @@ function getattrlistbulk(dirfd: cint; var attrList: TAttrList;
   external 'c' name 'getattrlistbulk';
 {$ENDIF}
 
-function DeviceInSet(const Devices: TDeviceSet; Device: QWord): Boolean;
-var
-  I: Integer;
-begin
-  for I := 0 to High(Devices) do
-    if Devices[I] = Device then
-      Exit(True);
-  Result := False;
-end;
-
-procedure IncludeDevice(var Devices: TDeviceSet; Device: QWord);
-begin
-  if (Device = 0) or DeviceInSet(Devices, Device) then
-    Exit;
-  SetLength(Devices, Length(Devices) + 1);
-  Devices[High(Devices)] := Device;
-end;
-
-function AllocatedSizeOf(const Path: string): Int64;
-{$IFDEF UNIX}
-var
-  Info: BaseUnix.Stat;
-begin
-  Result := 0;
-  if FpLstat(Path, Info) = 0 then
-  begin
-    if (Info.st_mode and S_IFMT) = S_IFREG then
-      Result := Int64(Info.st_blocks) * 512
-    else
-      Result := 0;
-  end;
-end;
-{$ELSE}
-begin
-  Result := 0;
-  if FileExists(Path) then
-    Result := FileSize(Path);
-end;
-{$ENDIF}
-
-function FileIdentity(const Path: string; out Device, FileID: QWord;
-  out LinkCount: LongWord): Boolean;
-{$IFDEF UNIX}
-var
-  Info: BaseUnix.Stat;
-begin
-  Result := False;
-  Device := 0;
-  FileID := 0;
-  LinkCount := 1;
-  if FpLstat(Path, Info) <> 0 then
-    Exit;
-  Device := QWord(Info.st_dev);
-  FileID := QWord(Info.st_ino);
-  LinkCount := Info.st_nlink;
-  Result := True;
-end;
-{$ELSE}
-{$IFDEF WINDOWS}
-var
-  Handle: THandle;
-  Info: BY_HANDLE_FILE_INFORMATION;
-begin
-  Result := False;
-  Device := 0;
-  FileID := 0;
-  LinkCount := 1;
-  Handle := CreateFile(PChar(Path), 0, FILE_SHARE_READ or FILE_SHARE_WRITE,
-    nil, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
-  if Handle = INVALID_HANDLE_VALUE then
-    Exit;
-  try
-    if not GetFileInformationByHandle(Handle, Info) then
-      Exit;
-    Device := QWord(Info.dwVolumeSerialNumber);
-    FileID := (QWord(Info.nFileIndexHigh) shl 32) or QWord(Info.nFileIndexLow);
-    LinkCount := Info.nNumberOfLinks;
-    Result := True;
-  finally
-    CloseHandle(Handle);
-  end;
-end;
-{$ELSE}
-begin
-  Result := False;
-  Device := 0;
-  FileID := 0;
-  LinkCount := 1;
-end;
-{$ENDIF}
-{$ENDIF}
-
 procedure AppendFile(var Contents: TDirectoryContents; const Entry: TDirFileEntry);
 var
   N: Integer;
@@ -201,15 +83,6 @@ begin
   N := Length(Names);
   SetLength(Names, N + 1);
   Names[N] := Name;
-end;
-
-function IsSymLinkAttr(Attr: LongInt): Boolean;
-begin
-  {$IFDEF UNIX}
-  Result := (Attr and faSymLink) <> 0;
-  {$ELSE}
-  Result := False;
-  {$ENDIF}
 end;
 
 function ReadDirectoryPortable(const Path: string;
@@ -249,21 +122,21 @@ begin
       if (Search.Name <> '.') and (Search.Name <> '..') then
       begin
         ChildPath := Prefix + Search.Name;
-        if (Search.Attr and faDirectory) <> 0 then
+        { BulkDirectoryReader.swift: a symlink is a leaf file entry with its
+          own allocation, never followed, whatever it points at. }
+        { FindFirst attributes follow links, so ask lstat. }
+        if ((Search.Attr and faDirectory) <> 0) and not IsSymLink(ChildPath) then
         begin
-          if not IsSymLinkAttr(Search.Attr) then
-          begin
-            ChildDev := VolumeDeviceOf(ChildPath);
-            if (ChildDev <> 0) and (ChildDev <> Result.Device) then
-              AppendName(Result.Contents.MountPointNames, Search.Name)
-            else
-              AppendName(Result.Contents.SubdirectoryNames, Search.Name);
-          end;
+          ChildDev := VolumeDeviceOf(ChildPath);
+          if (ChildDev <> 0) and (ChildDev <> Result.Device) then
+            AppendName(Result.Contents.MountPointNames, Search.Name)
+          else
+            AppendName(Result.Contents.SubdirectoryNames, Search.Name);
         end
-        else if not IsSymLinkAttr(Search.Attr) then
+        else
         begin
           Entry.Name := Search.Name;
-          Entry.Size := AllocatedSizeOf(ChildPath);
+          Entry.Size := EntryAllocatedSize(ChildPath);
           if FileIdentity(ChildPath, Dev, FileID, Links) then
           begin
             Entry.Device := Dev;

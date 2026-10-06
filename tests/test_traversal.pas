@@ -8,7 +8,7 @@ program test_traversal;
 
 uses
   {$IFDEF UNIX}BaseUnix,{$ENDIF}
-  SysUtils, Classes, FileTree, Traversal, PlatformFS, DirReader, PlatformVolumes;
+  SysUtils, Classes, FileTree, Traversal, PlatformFS, DirTypes, PlatformDirReader, PlatformVolumes;
 
 var
   Fail: Boolean;
