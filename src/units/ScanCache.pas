@@ -212,7 +212,7 @@ function ScanCacheSave(Tree: TFileTree; const RootPath: string;
   const Header: TScanCacheHeader): Boolean;
 var
   Dir, FinalPath, TmpPath: string;
-  Stream: TFileStream;
+  Stream: TMemoryStream;
   Device: QWord;
   PathBytes: RawByteString;
 begin
@@ -226,7 +226,9 @@ begin
   ForceDirectories(Dir);
   FinalPath := ScanCacheFilePath(RootPath);
   TmpPath := IncludeTrailingPathDelimiter(Dir) + Format('%16.16x.tmp', [GetTickCount64]);
-  Stream := TFileStream.Create(TmpPath, fmCreate);
+  { Built in memory and written once: field-sized writes to a file stream
+    are one system call each. }
+  Stream := TMemoryStream.Create;
   try
     WriteU32(Stream, FormatVersion);
     WriteU64(Stream, Header.EventID);
@@ -238,6 +240,7 @@ begin
     if Length(PathBytes) > 0 then
       Stream.WriteBuffer(PathBytes[1], Length(PathBytes));
     Tree.WriteSerialized(Stream);
+    Stream.SaveToFile(TmpPath);
   finally
     Stream.Free;
   end;
@@ -317,6 +320,7 @@ function ScanCacheLoad(const RootPath: string): TScanCacheEntry;
 var
   Path: string;
   Stream: TFileStream;
+  Body: TMemoryStream;
 begin
   Result.OK := False;
   Result.Tree := nil;
@@ -325,14 +329,21 @@ begin
   if not FileExists(Path) then
     Exit;
   Stream := TFileStream.Create(Path, fmOpenRead or fmShareDenyNone);
+  Body := TMemoryStream.Create;
   try
     if not ParseHeader(Stream, RootPath, Result.Header) then
       Exit;
-    Result.Tree := TFileTree.LoadSerialized(Stream);
+    { The tree is read in one go: LoadSerialized reads field by field and
+      checks the bytes left per name, each a system call on a file stream
+      (24 s, mostly system time, for a 1.5-million-node cache). }
+    Body.CopyFrom(Stream, Stream.Size - Stream.Position);
+    Body.Position := 0;
+    Result.Tree := TFileTree.LoadSerialized(Body);
     Result.OK := Result.Tree <> nil;
     if not Result.OK then
       FreeAndNil(Result.Tree);
   finally
+    Body.Free;
     Stream.Free;
   end;
 end;
