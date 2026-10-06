@@ -308,27 +308,53 @@ procedure TRingsChart.DrawSegmentLabels(ACanvas: TCanvas; Seg: TRingSegment);
 var
   Mid: Double;
   SX, SY: Integer;
+  ChordLength, LabelWidth, LabelHeight, MaxWidth: Double;
+  NameText, SizeText: string;
 begin
   if Seg.Depth = 0 then
   begin
+    NameText := Seg.Name;
+    SizeText := FormatFileSize(Seg.Size);
     ACanvas.Font.Color := ContrastTextColor(ColorFor(Seg.ColorPosition, Seg.Depth, False));
     ACanvas.Font.Style := [fsBold];
     ACanvas.Font.Size := 11;
     ACanvas.Brush.Style := bsClear;
-    ACanvas.TextOut(Round(FLayout.CenterX) - ACanvas.TextWidth(Seg.Name) div 2,
-      Round(FLayout.CenterY) - ACanvas.TextHeight(Seg.Name) - 2, Seg.Name);
+    MaxWidth := Seg.OuterRadius * 1.7;
+    LabelWidth := ACanvas.TextWidth(NameText);
+    if LabelWidth > MaxWidth then
+    begin
+      ACanvas.Font.Style := [];
+      ACanvas.Font.Size := 9;
+      ACanvas.Font.Color := ContrastTextColor(ColorFor(Seg.ColorPosition, Seg.Depth, False));
+      ACanvas.TextOut(Round(FLayout.CenterX) - ACanvas.TextWidth(SizeText) div 2,
+        Round(FLayout.CenterY) - ACanvas.TextHeight(SizeText) div 2, SizeText);
+      Exit;
+    end;
+    ACanvas.TextOut(
+      Round(FLayout.CenterX) - ACanvas.TextWidth(NameText) div 2,
+      Round(FLayout.CenterY) - ACanvas.TextHeight(NameText) div 2 -
+        ACanvas.TextHeight(SizeText) div 2 - 1, NameText);
     ACanvas.Font.Style := [];
     ACanvas.Font.Size := 9;
-    ACanvas.TextOut(Round(FLayout.CenterX) - ACanvas.TextWidth(FormatFileSize(Seg.Size)) div 2,
-      Round(FLayout.CenterY) + 2, FormatFileSize(Seg.Size));
+    ACanvas.TextOut(Round(FLayout.CenterX) - ACanvas.TextWidth(SizeText) div 2,
+      Round(FLayout.CenterY) + 1, SizeText);
     Exit;
   end;
   Mid := (Seg.InnerRadius + Seg.OuterRadius) / 2;
-  if (Seg.Sweep * Mid > 36) and (FLayout.Thickness >= 14) then
+  { Swift uses curved glyphs here. This Pascal fallback keeps the label
+    horizontal, but applies the same thickness/arc visibility gates and only
+    draws when the text fits the chord at the label radius. }
+  ChordLength := 2 * Mid * Sin(Seg.Sweep / 2);
+  if (FLayout.Thickness >= 12) and (Seg.Sweep * Mid >= 30) then
   begin
     ACanvas.Font.Size := 8;
     ACanvas.Font.Color := ContrastTextColor(ColorFor(Seg.ColorPosition, Seg.Depth, False));
     ACanvas.Brush.Style := bsClear;
+    LabelWidth := ACanvas.TextWidth(Seg.Name);
+    LabelHeight := ACanvas.TextHeight(Seg.Name);
+    if (LabelWidth > ChordLength * 0.85) or
+      (LabelHeight > FLayout.Thickness * 0.85) then
+      Exit;
     SX := Round(FLayout.CenterX + Cos(Seg.StartAngle + Seg.Sweep / 2) * Mid);
     SY := Round(FLayout.CenterY + Sin(Seg.StartAngle + Seg.Sweep / 2) * Mid);
     ACanvas.TextOut(SX - ACanvas.TextWidth(Seg.Name) div 2,
