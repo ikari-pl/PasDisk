@@ -13,7 +13,8 @@ uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
-  GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar;
+  GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
+  DisplayList;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -1144,7 +1145,7 @@ end;
 procedure TMainForm.RefreshList;
 var
   Node: TNodeID;
-  Sorted: TFPList;
+  Listed: TNodeIDArray;
   I: Integer;
   Child: TNodeID;
   Line: string;
@@ -1159,14 +1160,13 @@ begin
       Exit;
     FListMaxSize := 0;
     FListHover := -1;
-    Sorted := TFPList.Create;
-    try
-      FTree.ChildrenSortedForDisplay(Node, Sorted);
-      for I := 0 to Sorted.Count - 1 do
+    { DiskAnalyzer.swift folderItems: top 100 below the scan root, only
+      items above 1 KiB once the scan is complete. }
+    Listed := VisibleChildren(FTree, Node, Node = RootID, FScanThread <> nil);
+    begin
+      for I := 0 to High(Listed) do
       begin
-        Child := TNodeID(PtrUInt(Sorted[I]));
-        if FTree.SizeOf(Child) <= 0 then
-          Continue;
+        Child := Listed[I];
         if FCollector.Contains(FTree.PathOf(Child)) then
           Continue;
         { The name doubles as the accessible text of the owner-drawn row. }
@@ -1175,8 +1175,6 @@ begin
         if FTree.SizeOf(Child) > FListMaxSize then
           FListMaxSize := FTree.SizeOf(Child);
       end;
-    finally
-      Sorted.Free;
     end;
   finally
     FList.Items.EndUpdate;
