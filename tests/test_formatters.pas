@@ -82,6 +82,30 @@ begin
   end;
 end;
 
+{ DurationFormatter.scanDuration (String(format:), POSIX digits). }
+procedure CheckDurations;
+  procedure Check(Seconds: Double; const Want: string);
+  var
+    Got: string;
+  begin
+    Got := FormatScanDuration(Seconds);
+    if Got <> Want then
+    begin
+      WriteLn('FAIL: duration ', Seconds:0:4, ': got "', Got, '" want "', Want, '"');
+      Fail := True;
+    end;
+  end;
+begin
+  Check(0.85, 'Scanned in 850 ms');
+  Check(0.0004, 'Scanned in 0 ms');
+  Check(12.44, 'Scanned in 12.4 seconds');
+  Check(59.96, 'Scanned in 60.0 seconds');
+  Check(187.9, 'Scanned in 3:07');
+  Check(3600, 'Scanned in 60:00');
+  if not Fail then
+    WriteLn('ok: scan durations match DurationFormatter');
+end;
+
 var
   Dir: string;
 begin
@@ -89,6 +113,7 @@ begin
   Dir := ExtractFilePath(ParamStr(0)) + 'data' + PathDelim;
   CheckTable(Dir + 'bytecount_en_US.tsv', '.', ',');
   CheckTable(Dir + 'bytecount_en_PL.tsv', ',', '.');
+  CheckDurations;
   if Fail then
     Halt(1);
   WriteLn('test_formatters: all passed');

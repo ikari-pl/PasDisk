@@ -50,3 +50,7 @@ bin/
 # Agent worktrees
 .claude/worktrees/
 /OpenDisk.app/
+
+# Component demo builds (sources tools/*_demo.lpr/.lpi are tracked)
+/tools/*_demo
+/tools/*_demo.app/

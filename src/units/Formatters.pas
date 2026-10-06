@@ -23,6 +23,11 @@ function FormatFileSize(Bytes: Int64): string;
   grouped TB value such as '2,000 TB' also loses its group: '2 TB'). }
 function FormatDecimalNoFraction(Bytes: Int64): string;
 
+{ DurationFormatter.scanDuration: 'Scanned in 850 ms' under a second,
+  'Scanned in 12.4 seconds' under a minute, else 'Scanned in 3:07'.
+  Like Swift's String(format:), digits are not localized. }
+function FormatScanDuration(Seconds: Double): string;
+
 { The same with explicit separators (portable; used by the tests). }
 function FormatFileSizeWith(Bytes: Int64; const DecimalSep, GroupSep: string): string;
 function FormatDecimalNoFractionWith(Bytes: Int64;
@@ -161,6 +166,22 @@ begin
       Delete(Result, I, J - I);
       Break;
     end;
+end;
+
+function FormatScanDuration(Seconds: Double): string;
+var
+  Fmt: TFormatSettings;
+  Minutes, Secs: Int64;
+begin
+  Fmt := DefaultFormatSettings;
+  Fmt.DecimalSeparator := '.';
+  if Seconds < 1 then
+    Exit(Format('Scanned in %.0f ms', [Seconds * 1000], Fmt));
+  if Seconds < 60 then
+    Exit(Format('Scanned in %.1f seconds', [Seconds], Fmt));
+  Minutes := Trunc(Seconds / 60);
+  Secs := Trunc(Seconds - Minutes * 60);
+  Result := Format('Scanned in %d:%.2d', [Minutes, Secs], Fmt);
 end;
 
 var

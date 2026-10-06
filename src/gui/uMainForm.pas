@@ -12,8 +12,8 @@ interface
 uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
-  ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformAppearance,
-  GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology;
+  ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
+  GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -84,6 +84,9 @@ type
     FRootName: string;
     FRootTotal: QWord;
     FRootFree: QWord;
+    { DiskAnalysisView ScanStatusBar and the scan it describes. }
+    FScanBar: TScanStatusBar;
+    FScanStart: TDateTime;
      FScanThread: TScanThread;
      FPoll: TTimer;
     FBreadcrumbs: TStringList;
@@ -134,6 +137,8 @@ type
     procedure ShowAnalysisState(const Symbol, Title, Description: string;
       const Captions: array of string; const Handlers: array of TNotifyEvent);
     procedure HideAnalysisState;
+    function ScanFraction(Bytes: Int64): Double;
+    procedure RefreshVolumeCapacity;
   public
     constructor Create(AOwner: TComponent); override;
   end;
@@ -425,6 +430,13 @@ begin
   FDeleteButton.OnClick := @DeleteClick;
   FDeleteButton.Enabled := False;
 
+  { Spans the window bottom, below the collector (created after it, so
+    the bottom alignment puts it lowest). }
+  FScanBar := TScanStatusBar.Create(Self);
+  FScanBar.Parent := FAnalysis;
+  FScanBar.Align := alBottom;
+  FScanBar.Top := FCollectorPanel.Top + FCollectorPanel.Height;
+
   FBody := TPanel.Create(Self);
   FBody.Parent := FAnalysis;
   FBody.Align := alClient;
@@ -582,6 +594,7 @@ begin
   FAnalysis.Visible := False;
   FPicker.Visible := True;
   FPicker.BringToFront;
+  FStatus.Visible := True;
   FStatus.SimpleText := 'Select a disk to analyze';
   Caption := 'OpenDisk';
 end;
@@ -859,7 +872,12 @@ begin
   ShowAnalysis;
   FCrumbBar.SetPath(Expanded, FRootName, Expanded);
   Caption := FRootName;
-  FStatus.SimpleText := 'Scanning ' + Expanded + '…';
+  { The analysis window has its own status bar. }
+  FStatus.Visible := False;
+  FScanStart := Now;
+  FScanBar.SetTotals(0, 0);
+  FScanBar.SetScanning(0, 0, sspScanning, ScanFraction(0), FScanStart);
+  RefreshVolumeCapacity;
   { Disks stays enabled: it cancels the scan. }
   FBackBtn.Enabled := False;
   FRefreshBtn.Enabled := False;
@@ -875,8 +893,8 @@ begin
     FPoll.Enabled := False;
     Exit;
   end;
-  FStatus.SimpleText := Format('Scanning: %s (%d items)',
-    [FormatFileSize(FScanThread.Bytes), FScanThread.Items]);
+  FScanBar.SetScanning(FScanThread.Bytes, FScanThread.Items, sspScanning,
+    ScanFraction(FScanThread.Bytes), FScanStart);
   if FScanThread.Finished then
   begin
     FPoll.Enabled := False;
@@ -887,7 +905,7 @@ end;
 procedure TMainForm.ScanFinished;
 var
   Thread: TScanThread;
-  Cap, ShowPath: string;
+  ShowPath: string;
 begin
   Thread := FScanThread;
   FScanThread := nil;
@@ -900,19 +918,17 @@ begin
   try
     if Thread.Error <> '' then
     begin
-      FStatus.SimpleText := 'Scan failed: ' + Thread.Error;
+      FScanBar.SetFinished(0, 0, 0);
+      ShowAnalysisState('exclamationmark.triangle', 'Scan Failed', Thread.Error,
+        ['Rescan'], [@RescanState]);
       Exit;
     end;
     FTree := Thread.Tree;
     Thread.FTree := nil;
     FMode := umAnalysis;
-    Cap := '';
-    if FRootTotal > 0 then
-      Cap := Format(' · volume %s / %s',
-        [FormatFileSize(Int64(FRootTotal - FRootFree)),
-         FormatFileSize(Int64(FRootTotal))]);
-    FStatus.SimpleText := Format('%s · %d items%s',
-      [FormatFileSize(FTree.SizeOf(RootID)), FTree.NodeCount - 1, Cap]);
+    { DiskAnalysisView: capacity refreshed when a scan ends. }
+    RefreshVolumeCapacity;
+    FScanBar.SetFinished(0, 0, (Now - FScanStart) * 86400);
     ShowNode(FRootPath);
     if (Thread.Unreadable > 0) and (FTree.NodeCount <= 1) then
       ShowAnalysisState('lock.slash', 'Couldn''t Read This Location',
@@ -964,6 +980,36 @@ begin
     FormatFileSize(FTree.SizeOf(Node));
   RefreshList;
   FBackBtn.Enabled := FBreadcrumbs.Count > 0;
+  { displayedTotalBytes and rootItems.count. }
+  FScanBar.SetTotals(FTree.SizeOf(Node), FList.Items.Count);
+end;
+
+{ DiskAnalysisView progressFraction: scanned bytes over the volume's used
+  space when scanning a whole disk; unknown (-1) for a folder. }
+function TMainForm.ScanFraction(Bytes: Int64): Double;
+var
+  Used: Int64;
+begin
+  Used := Int64(FRootTotal) - Int64(FRootFree);
+  if (FRootTotal = 0) or (Used <= 0) then
+    Exit(-1);
+  Result := Min(1, Bytes / Used);
+end;
+
+{ DeviceMonitor.volumeCapacity(ofPath:) for the analysed root. }
+procedure TMainForm.RefreshVolumeCapacity;
+var
+  Cap: TVolumeCapacity;
+  Available: Int64;
+begin
+  if VolumeCapacityOf(FRootPath, Cap) and (Cap.TotalBytes > 0) then
+  begin
+    Available := AvailableBytesOf(Cap);
+    FScanBar.SetVolumeCapacity(Cap.TotalBytes, Available,
+      Max(0, Available - Cap.FreeBytes));
+  end
+  else
+    FScanBar.ClearVolumeCapacity;
 end;
 
 procedure TMainForm.RefreshList;
@@ -1347,12 +1393,13 @@ begin
     Exit;
   Freed := FCollector.DeleteAll;
   RefreshCollector;
+  StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+  { CollectorBar shows what was freed (after StartScan resets it). }
   if FCollector.Failures.Count > 0 then
-    FStatus.SimpleText := Format('Freed %s; %d item(s) could not be deleted and stay staged — rescanning…',
+    FCollectorLabel.Caption := Format('Freed %s; %d item(s) could not be deleted',
       [FormatFileSize(Freed), FCollector.Failures.Count])
   else
-    FStatus.SimpleText := 'Freed ' + FormatFileSize(Freed) + ' — rescanning…';
-  StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+    FCollectorLabel.Caption := 'Freed ' + FormatFileSize(Freed);
 end;
 
 end.
