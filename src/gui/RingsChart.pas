@@ -51,6 +51,9 @@ type
   public
     { The drag ended (its mouse-up never reaches the control). }
     procedure DragFinished;
+    { RingsChartView.draggableSegment(at:): depth >= 1, a file or folder;
+      nil elsewhere. }
+    function DraggableSegmentAt(X, Y: Integer): TRingSegment;
     { Colours come from the appearance: drop the cached layer. }
     procedure AppearanceChanged;
     constructor Create(AOwner: TComponent); override;
@@ -59,6 +62,7 @@ type
     property Root: TChartItem read FRoot write SetRoot;
     property OnSelect: TRingSelectEvent read FOnSelect write FOnSelect;
     property OnDragSegment: TRingDragEvent read FOnDragSegment write FOnDragSegment;
+    property OnContextPopup;
   end;
 
 implementation
@@ -470,9 +474,8 @@ begin
     FDragging := True;
     if FLayout <> nil then
     begin
-      Hit := FLayout.SegmentAt(FPressX, FPressY);
-      if (Hit <> nil) and (Hit.Depth >= 1) and (Hit.Kind in [ckDirectory, ckFile]) and
-        Assigned(FOnDragSegment) then
+      Hit := DraggableSegmentAt(FPressX, FPressY);
+      if (Hit <> nil) and Assigned(FOnDragSegment) then
         FOnDragSegment(Self, Hit);
     end;
     Exit;
@@ -525,6 +528,17 @@ begin
   inherited MouseUp(Button, Shift, X, Y);
   if Button = mbLeft then
     FPressed := False;
+end;
+
+function TRingsChart.DraggableSegmentAt(X, Y: Integer): TRingSegment;
+begin
+  Result := nil;
+  if FLayout = nil then
+    Exit;
+  Result := FLayout.SegmentAt(X, Y);
+  if (Result <> nil) and not ((Result.Depth >= 1) and
+    (Result.Kind in [ckDirectory, ckFile])) then
+    Result := nil;
 end;
 
 procedure TRingsChart.DragFinished;

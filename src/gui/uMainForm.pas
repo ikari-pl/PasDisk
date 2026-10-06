@@ -109,6 +109,8 @@ type
     { FolderRowView / FileActionsMenu context menu (PARITY gaps 14-15). }
     FRowMenu: TPopupMenu;
     FMenuRow: Integer;
+    { The file the open context menu acts on (row or ring segment). }
+    FMenuItem: TFolderItem;
     { Utilities/FileDrag.swift: the files of the in-app drag in flight,
       whether the chart pane is targeted, and the protected reason. }
     FDragFiles: array of TFolderItem;
@@ -190,6 +192,10 @@ type
     function RowItem(Index: Integer; out Item: TFolderItem): Boolean;
     procedure StageItems(const Items: array of TFolderItem);
     procedure ListContextPopup(Sender: TObject; MousePos: TPoint; var Handled: Boolean);
+    procedure ChartContextPopup(Sender: TObject; MousePos: TPoint; var Handled: Boolean);
+    procedure PopUpFileMenu(const Item: TFolderItem; SelectedCount: Integer;
+      const ScreenPt: TPoint);
+    procedure ChartMenuHookTick(Sender: TObject);
     procedure MenuAddClick(Sender: TObject);
     procedure MenuAddSelectedClick(Sender: TObject);
     procedure MenuShowInFinderClick(Sender: TObject);
@@ -678,6 +684,7 @@ begin
   FChart.Parent := FChartPanel;
   FChart.Align := alClient;
   FChart.OnSelect := @ChartSelect;
+  FChart.OnContextPopup := @ChartContextPopup;
 
   { DiskAnalysisView chartPane: the CollectorBar under the chart,
     .padding(.horizontal, 12).padding(.bottom, 10); its list and notice
@@ -1357,6 +1364,15 @@ begin
       WriteLn('drag self-test: ', FileDragSelfTest(FList, FChartPanel, DragSample,
         GetEnvironmentVariable('OPENDISK_GUI_DRAG_SELFTEST')));
     Flush(Output);
+    { Automation: OPENDISK_GUI_CHART_MENU=dx,dy opens the segment menu at that
+      offset from the chart centre. }
+    if GetEnvironmentVariable('OPENDISK_GUI_CHART_MENU') <> '' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 800;
+        OnTimer := @ChartMenuHookTick;
+        Enabled := True;
+      end;
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
     if GetEnvironmentVariable('OPENDISK_GUI_MENU') <> '' then
       with TTimer.Create(Self) do
@@ -2216,7 +2232,6 @@ procedure TMainForm.ListContextPopup(Sender: TObject; MousePos: TPoint;
   var Handled: Boolean);
 var
   Item: TFolderItem;
-  M: TMenuItem;
   Selected: Integer;
 begin
   Handled := True;
@@ -2224,17 +2239,52 @@ begin
   { menuContent is empty for synthetic rows. }
   if not RowItem(FMenuRow, Item) or (Copy(Item.Path, 1, 2) = '::') then
     Exit;
+  Selected := 0;
+  if FList.Selected[FMenuRow] then
+    Selected := FList.SelCount;
+  PopUpFileMenu(Item, Selected, FList.ClientToScreen(MousePos));
+end;
+
+{ RingsChartView .contextMenu: FileActionsMenu for the segment under the
+  pointer, when it is draggable. }
+procedure TMainForm.ChartContextPopup(Sender: TObject; MousePos: TPoint;
+  var Handled: Boolean);
+var
+  Seg: TRingSegment;
+  Item: TFolderItem;
+begin
+  Handled := True;
+  Seg := FChart.DraggableSegmentAt(MousePos.X, MousePos.Y);
+  if Seg = nil then
+    Exit;
+  Item.Path := Seg.Path;
+  Item.Name := Seg.Name;
+  Item.Size := Seg.Size;
+  Item.IsDirectory := Seg.Kind = ckDirectory;
+  Item.ItemCount := 0;
+  FMenuRow := -1;
+  PopUpFileMenu(Item, 0, FChart.ClientToScreen(MousePos));
+end;
+
+{ FolderRowView.menuContent / FileActionsMenu: Add to Collector (off for
+  protected paths), Add N Selected when SelectedCount > 1, Show in Finder,
+  Copy Path. }
+procedure TMainForm.PopUpFileMenu(const Item: TFolderItem; SelectedCount: Integer;
+  const ScreenPt: TPoint);
+var
+  M: TMenuItem;
+begin
+  FMenuItem := Item;
   FRowMenu.Items.Clear;
   M := TMenuItem.Create(FRowMenu);
   M.Caption := 'Add to Collector';
   M.Enabled := not IsProtectedPath(Item.Path);
   M.OnClick := @MenuAddClick;
   FRowMenu.Items.Add(M);
-  Selected := FList.SelCount;
-  if FList.Selected[FMenuRow] and (Selected > 1) then
+  if SelectedCount > 1 then
   begin
     M := TMenuItem.Create(FRowMenu);
-    M.Caption := Format('Add %d Selected to Collector', [Selected]);
+    M.Caption := Format('Add %d Selected to Collector', [SelectedCount]);
     M.OnClick := @MenuAddSelectedClick;
     FRowMenu.Items.Add(M);
   end;
@@ -2249,8 +2299,28 @@ begin
   M.Caption := 'Copy Path';
   M.OnClick := @MenuCopyPathClick;
   FRowMenu.Items.Add(M);
-  with FList.ClientToScreen(MousePos) do
-    FRowMenu.PopUp(X, Y);
+  FRowMenu.PopUp(ScreenPt.X, ScreenPt.Y);
+end;
+
+procedure TMainForm.ChartMenuHookTick(Sender: TObject);
+var
+  Handled: Boolean;
+  P: TPoint;
+  Parts: TStringList;
+begin
+  (Sender as TTimer).Enabled := False;
+  Parts := TStringList.Create;
+  try
+    Parts.CommaText := GetEnvironmentVariable('OPENDISK_GUI_CHART_MENU');
+    if Parts.Count <> 2 then
+      Exit;
+    { Offsets from the chart centre. }
+    P := Point(FChart.ClientWidth div 2 + StrToIntDef(Parts[0], 0),
+      FChart.ClientHeight div 2 + StrToIntDef(Parts[1], 0));
+  finally
+    Parts.Free;
+  end;
+  ChartContextPopup(FChart, P, Handled);
 end;
 
 procedure TMainForm.ConfirmHookTick(Sender: TObject);
@@ -2274,11 +2344,8 @@ begin
 end;
 
 procedure TMainForm.MenuAddClick(Sender: TObject);
-var
-  Item: TFolderItem;
 begin
-  if RowItem(FMenuRow, Item) then
-    StageItems([Item]);
+  StageItems([FMenuItem]);
 end;
 
 procedure TMainForm.MenuAddSelectedClick(Sender: TObject);
@@ -2299,19 +2366,13 @@ begin
 end;
 
 procedure TMainForm.MenuShowInFinderClick(Sender: TObject);
-var
-  Item: TFolderItem;
 begin
-  if RowItem(FMenuRow, Item) then
-    RevealInFileManager(Item.Path);
+  RevealInFileManager(FMenuItem.Path);
 end;
 
 procedure TMainForm.MenuCopyPathClick(Sender: TObject);
-var
-  Item: TFolderItem;
 begin
-  if RowItem(FMenuRow, Item) then
-    Clipboard.AsText := Item.Path;
+  Clipboard.AsText := FMenuItem.Path;
 end;
 
 procedure TMainForm.CollectorRemove(Sender: TObject; const Path: string);
