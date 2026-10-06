@@ -31,15 +31,25 @@ function SiblingVolumeNames: TStringArray;
 { Scans Path as the Swift app does; Unreadable (optional) counts folders
   that could not be listed across every volume walked. Progress reports
   totals across volumes. OnPartial receives snapshots composed like the
-  final tree (ScanEngine.swift PartialResultAssembler). }
+  final tree (ScanEngine.swift PartialResultAssembler). With UseCache the
+  root tree (the root volume for '/') goes through scanRootTreeUsingCache:
+  a cached tree updated from the change journal when possible, else a
+  full walk; either way the cache is saved. }
+type
+  { ScanPhase: True while the cache is checked against the change journal
+    ('Checking what changed since the last scan…'), False when walking. }
+  TScanPhaseChanged = procedure(CheckingChanges: Boolean);
+
 function ScanForAnalysis(const Path: string; Progress: TScanProgress = nil;
   IsCancelled: TScanCancelled = nil; Unreadable: PInteger = nil;
-  OnPartial: TScanPartial = nil): TFileTree;
+  OnPartial: TScanPartial = nil; UseCache: Boolean = False;
+  OnPhase: TScanPhaseChanged = nil): TFileTree;
 
 implementation
 
 uses
-  PlatformVolumes, PlatformProcessTuning, Volumes;
+  PlatformVolumes, PlatformProcessTuning, Volumes, PlatformFS, ScanCache,
+  ChangeJournal, JournalFactory, Incremental, DirTypes;
 
 function ResolveDataVolumeAlias(const Path: string): string;
 var
@@ -87,6 +97,104 @@ begin
     Result := VolumeWorkerCount
   else
     Result := SubtreeWorkerCount;
+end;
+
+threadvar
+  CacheEnabled: Boolean;
+  UserPhase: TScanPhaseChanged;
+
+procedure SetPhase(CheckingChanges: Boolean);
+begin
+  if Assigned(UserPhase) then
+    UserPhase(CheckingChanges);
+end;
+
+function CacheHeader(EventID: QWord; CapturedAt, FullScanSeconds: Double): TScanCacheHeader;
+begin
+  Result.EventID := EventID;
+  Result.CapturedAt := CapturedAt;
+  Result.FullScanSeconds := FullScanSeconds;
+end;
+
+{ ScanEngine.swift scanRootTreeUsingCache. RootName is the tree's root
+  name (the requested path when ScanPath is an alias). }
+function ScanRootTreeUsingCache(const ScanPathName, RootName: string;
+  Progress: TScanProgress; const AllowedDevices: TDeviceSet;
+  IsCancelled: TScanCancelled; Unreadable: PInteger; Workers: Integer;
+  OnPartial: TScanPartial): TFileTree;
+var
+  Journal: TChangeJournal;
+  StartEventID: QWord;
+  StartedAt, Expected: Double;
+  Header: TScanCacheHeader;
+  FileBytes: Int64;
+  Collected: TJournalResult;
+  Changes: TChangeSet;
+  Cached: TScanCacheEntry;
+  Applied: Boolean;
+  Started: QWord;
+begin
+  Journal := CreateChangeJournal;
+  try
+    StartEventID := Journal.CurrentEventID;
+    StartedAt := UnixTimeNow;
+    { FSEvents reports real paths: a path that is not its own real path
+      (e.g. /var vs /private/var) would never match the changes, so its
+      cache could only be replayed stale. Walk instead. }
+    if CacheEnabled and (ResolveRealPath(ScanPathName) = ScanPathName) and
+      ScanCachePeek(ScanPathName, Header, FileBytes) then
+    begin
+      SetPhase(True);
+      if Header.FullScanSeconds > 0 then
+        Expected := Header.FullScanSeconds
+      else
+        Expected := FileBytes / 10000000.0;
+      Collected := Journal.Collect(Header.EventID, ScanPathName,
+        ReplayTimeBudget(Expected), jmHistory, Changes);
+      try
+        Cached := ScanCacheLoad(ScanPathName);
+        if Cached.OK and (Cached.Tree.NameOf(RootID) = RootName) then
+        begin
+          { The cached tree is shown while the changes are applied. }
+          if Assigned(OnPartial) then
+            OnPartial(Cached.Tree.Clone);
+          SetPhase(False);
+          Applied := (Collected = jrChanges) and
+            ApplyChanges(Cached.Tree, ScanPathName, Changes, Cached.Header.CapturedAt, Progress);
+          if Applied then
+          begin
+            if Unreadable <> nil then
+              Unreadable^ := 0;
+            ScanCacheSave(Cached.Tree, ScanPathName,
+              CacheHeader(StartEventID, StartedAt, Header.FullScanSeconds));
+            Exit(Cached.Tree);
+          end;
+          Cached.Tree.Free;
+        end
+        else
+        begin
+          Cached.Tree.Free;
+          SetPhase(False);
+        end;
+      finally
+        if Collected = jrChanges then
+        begin
+          Changes.ChangedDirectories.Free;
+          Changes.SubtreesToRescan.Free;
+        end;
+      end;
+    end;
+  finally
+    Journal.Free;
+  end;
+
+  Started := GetTickCount64;
+  Result := ScanPath(ScanPathName, Progress, AllowedDevices, IsCancelled,
+    Unreadable, Workers, OnPartial);
+  Result.SetRootName(RootName);
+  if CacheEnabled and not (Assigned(IsCancelled) and IsCancelled()) then
+    ScanCacheSave(Result, ScanPathName,
+      CacheHeader(StartEventID, StartedAt, (GetTickCount64 - Started) / 1000.0));
 end;
 
 threadvar
@@ -172,8 +280,9 @@ begin
   BaseItems := 0;
   LastBytes := 0;
   LastItems := 0;
-  Result := ScanPath('/', @CombinedProgress, SubtreeAllowedDevices('/'),
-    IsCancelled, Unreadable, WorkersFor('/'), PartialFor(@RootVolumePartial));
+  Result := ScanRootTreeUsingCache('/', '/', @CombinedProgress,
+    SubtreeAllowedDevices('/'), IsCancelled, Unreadable, WorkersFor('/'),
+    PartialFor(@RootVolumePartial));
   for I := 0 to High(Names) do
   begin
     if Assigned(IsCancelled) and IsCancelled() then
@@ -211,23 +320,28 @@ end;
 
 function ScanForAnalysis(const Path: string; Progress: TScanProgress;
   IsCancelled: TScanCancelled; Unreadable: PInteger;
-  OnPartial: TScanPartial): TFileTree;
+  OnPartial: TScanPartial; UseCache: Boolean;
+  OnPhase: TScanPhaseChanged): TFileTree;
 var
   ScanRoot: string;
 begin
   TuneProcessForScanning;
   UserPartial := OnPartial;
   PartialRootName := Path;
+  CacheEnabled := UseCache;
+  UserPhase := OnPhase;
   try
     if (Path = '/') and (SystemVolumesDirectory <> '') then
       Exit(ScanBootVolumeGroup(Progress, IsCancelled, Unreadable));
     ScanRoot := ResolveDataVolumeAlias(Path);
-    Result := ScanPath(ScanRoot, Progress, SubtreeAllowedDevices(ScanRoot),
-      IsCancelled, Unreadable, WorkersFor(ScanRoot), PartialFor(@SubtreePartial));
+    Result := ScanRootTreeUsingCache(ScanRoot, Path, Progress,
+      SubtreeAllowedDevices(ScanRoot), IsCancelled, Unreadable,
+      WorkersFor(ScanRoot), PartialFor(@SubtreePartial));
   finally
     UserPartial := nil;
+    UserPhase := nil;
+    CacheEnabled := False;
   end;
-  Result.SetRootName(Path);
 end;
 
 end.

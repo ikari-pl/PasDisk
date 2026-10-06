@@ -26,6 +26,7 @@ type
     FItems: Integer;
   FError: string;
     FUnreadable: Integer;
+    FCheckingChanges: Integer;
     { Newest partial snapshot not yet taken by the UI (od-31j.45). }
     FPartialLock: TRTLCriticalSection;
     FPartial: TFileTree;
@@ -38,6 +39,9 @@ type
     procedure OfferPartial(Tree: TFileTree);
     { Called on the UI thread: the newest snapshot (caller owns), or nil. }
     function TakePartial: TFileTree;
+    { True while the cache is checked against the change journal. }
+    function CheckingChanges: Boolean;
+    procedure SetCheckingChanges(Value: Boolean);
     { Valid only after WaitFor. }
     property Tree: TFileTree read FTree;
     property Error: string read FError;
@@ -229,6 +233,22 @@ begin
   LeaveCriticalSection(FPartialLock);
 end;
 
+function TScanThread.CheckingChanges: Boolean;
+begin
+  Result := InterLockedCompareExchange(FCheckingChanges, 0, 0) <> 0;
+end;
+
+procedure TScanThread.SetCheckingChanges(Value: Boolean);
+begin
+  InterLockedExchange(FCheckingChanges, Ord(Value));
+end;
+
+procedure ScanPhaseThunk(CheckingChanges: Boolean);
+begin
+  if ActiveScanThread <> nil then
+    ActiveScanThread.SetCheckingChanges(CheckingChanges);
+end;
+
 procedure ScanPartialThunk(Tree: TFileTree);
 begin
   if ActiveScanThread <> nil then
@@ -272,8 +292,11 @@ begin
       { ScanEngine.swift performScan: '/' is the whole boot volume group,
         other paths include the Data volume behind the firmlinks (and its
         alias); a cancelled scan's partial tree is discarded. }
+      { The app always scans through the cache (ScanEngine.swift
+        scanRootTreeUsingCache). }
       FTree := ScanForAnalysis(FPath, @ScanProgressThunk,
-        @ScanCancelledThunk, @FUnreadable, @ScanPartialThunk);
+        @ScanCancelledThunk, @FUnreadable, @ScanPartialThunk, True,
+        @ScanPhaseThunk);
       if Terminated then
         FreeAndNil(FTree);
     except
@@ -971,13 +994,19 @@ begin
 end;
 
 procedure TMainForm.OnPoll(Sender: TObject);
+var
+  Phase: TScanStatusPhase;
 begin
   if FScanThread = nil then
   begin
     FPoll.Enabled := False;
     Exit;
   end;
-  FScanBar.SetScanning(FScanThread.Bytes, FScanThread.Items, sspScanning,
+  if FScanThread.CheckingChanges then
+    Phase := sspCheckingChanges
+  else
+    Phase := sspScanning;
+  FScanBar.SetScanning(FScanThread.Bytes, FScanThread.Items, Phase,
     ScanFraction(FScanThread.Bytes), FScanStart);
   ShowPartial(FScanThread.TakePartial);
   if FScanThread.Finished then

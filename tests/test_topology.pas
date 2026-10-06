@@ -6,7 +6,7 @@ program test_topology;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, FileTree, ScanTopology, PlatformVolumes;
+  SysUtils, Classes, FileTree, ScanTopology, PlatformVolumes, ScanCache, PlatformFS;
 
 var
   Failures: Integer;
@@ -67,11 +67,85 @@ begin
   end;
 end;
 
+var
+  Phases: string;
+  CachedSnapshots: Integer;
+
+procedure RecordPhase(CheckingChanges: Boolean);
+begin
+  if CheckingChanges then
+    Phases := Phases + 'C'
+  else
+    Phases := Phases + 'S';
+end;
+
+procedure CountSnapshot(Tree: TFileTree);
+begin
+  Inc(CachedSnapshots);
+  Tree.Free;
+end;
+
+{ ScanEngine.swift scanRootTreeUsingCache. }
+procedure TestCache;
+var
+  Dir, CacheDir: string;
+  T: TFileTree;
+  F: TFileStream;
+begin
+  Dir := GetTempDir(False) + 'opendisk-topology-cache-' + IntToStr(GetProcessID);
+  CacheDir := Dir + '-cache';
+  ForceDirectories(Dir + '/sub');
+  ForceDirectories(CacheDir);
+  { Callers pass real paths (FSEvents reports /private/var, not /var). }
+  Dir := ResolveRealPath(Dir);
+  ScanCacheSetDirectory(CacheDir);
+  try
+    F := TFileStream.Create(Dir + '/sub/a.bin', fmCreate);
+    F.Size := 50000;
+    F.Free;
+    Phases := '';
+    T := ScanForAnalysis(Dir, nil, nil, nil, nil, True, @RecordPhase);
+    T.Free;
+    Expect(Phases = '', 'first scan: no cache, no checking phase');
+    Expect(FileExists(ScanCacheFilePath(Dir)), 'first scan saves the cache');
+
+    F := TFileStream.Create(Dir + '/sub/b.bin', fmCreate);
+    F.Size := 70000;
+    F.Free;
+    { Let FSEvents write the change to its history. }
+    Sleep(3000);
+    Phases := '';
+    CachedSnapshots := 0;
+    T := ScanForAnalysis(Dir, nil, nil, nil, @CountSnapshot, True, @RecordPhase);
+    try
+      Expect(Phases = 'CS', 'second scan checks the cache first (phases ' + Phases + ')');
+      Expect(CachedSnapshots >= 1, 'the cached tree is shown while changes apply');
+      Expect(T.NodeIDForPath(Dir + '/sub/b.bin', Dir) <> NoNode,
+        'the file added between scans is in the result');
+      Expect(T.NameOf(RootID) = Dir, 'root name kept');
+    finally
+      T.Free;
+    end;
+
+    Phases := '';
+    T := ScanForAnalysis(Dir, nil, nil, nil, nil, False, @RecordPhase);
+    T.Free;
+    Expect(Phases = '', 'without UseCache the cache is ignored');
+  finally
+    ScanCacheSetDirectory('');
+    DeleteFile(Dir + '/sub/a.bin');
+    DeleteFile(Dir + '/sub/b.bin');
+    RemoveDir(Dir + '/sub');
+    RemoveDir(Dir);
+  end;
+end;
+
 begin
   Failures := 0;
   TestAlias;
   TestSiblings;
   TestSubtreeRootName;
+  TestCache;
   if Failures > 0 then
   begin
     WriteLn('test_topology: ', Failures, ' failure(s)');

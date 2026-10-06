@@ -161,7 +161,8 @@ tests/test_topology: tests/test_topology.pas $(UNITDIR)/ScanTopology.pas \
 		$(UNITDIR)/PlatformProcessTuning.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/FileTree.pas $(UNITDIR)/Volumes.pas \
 		$(UNITDIR)/PlatformVolumes.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
-		$(UNITDIR)/PlatformFS.pas
+		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/ScanCache.pas $(UNITDIR)/Incremental.pas \
+		$(UNITDIR)/ChangeJournal.pas $(UNITDIR)/PlatformChangeJournal.pas $(UNITDIR)/JournalFactory.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_topology tests/test_topology.pas
 
 tests/test_deletejob: tests/test_deletejob.pas $(UNITDIR)/Collector.pas \
