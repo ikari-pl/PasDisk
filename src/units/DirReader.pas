@@ -37,8 +37,6 @@ type
     Device: QWord;
   end;
 
-function DeviceIDOfPath(const Path: string): QWord;
-function IsVolumeRoot(const Path: string): Boolean;
 type
   { st_dev values a read may enter (Swift Set<dev_t>); empty = any. }
   TDeviceSet = array of QWord;
@@ -94,60 +92,6 @@ function getattrlistbulk(dirfd: cint; var attrList: TAttrList;
   attrBuf: Pointer; attrBufSize: csize_t; options: QWord): cint; cdecl;
   external 'c' name 'getattrlistbulk';
 {$ENDIF}
-
-function DeviceIDOfPath(const Path: string): QWord;
-{$IFDEF UNIX}
-var
-  Info: BaseUnix.Stat;
-begin
-  Result := 0;
-  if FpLstat(Path, Info) = 0 then
-    Result := QWord(Info.st_dev);
-end;
-{$ELSE}
-{$IFDEF WINDOWS}
-var
-  Handle: THandle;
-  Info: BY_HANDLE_FILE_INFORMATION;
-begin
-  Result := 0;
-  Handle := CreateFile(PChar(Path), 0, FILE_SHARE_READ or FILE_SHARE_WRITE,
-    nil, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
-  if Handle = INVALID_HANDLE_VALUE then
-    Exit;
-  try
-    if GetFileInformationByHandle(Handle, Info) then
-      Result := (QWord(Info.dwVolumeSerialNumber));
-  finally
-    CloseHandle(Handle);
-  end;
-end;
-{$ELSE}
-begin
-  Result := 0;
-end;
-{$ENDIF}
-{$ENDIF}
-
-{ VolumeAttributes.isVolumeRoot: the volume's mount point is the path
-  itself. Firmlinked folders (/Users on a split system volume) sit on the
-  data volume but are not its mount point, so they are not roots. Falls
-  back to a device comparison where mount points are unknown. }
-function IsVolumeRoot(const Path: string): Boolean;
-var
-  Expanded, Parent, Mount: string;
-begin
-  Expanded := ExcludeTrailingPathDelimiter(ExpandFileName(Path));
-  if Expanded = '' then
-    Exit(True);
-  Parent := ExtractFileDir(Expanded);
-  if Parent = Expanded then
-    Exit(True);
-  Mount := MountPointOf(Expanded);
-  if Mount <> '' then
-    Exit(ExcludeTrailingPathDelimiter(Mount) = Expanded);
-  Result := DeviceIDOfPath(Expanded) <> DeviceIDOfPath(Parent);
-end;
 
 function DeviceInSet(const Devices: TDeviceSet; Device: QWord): Boolean;
 var
@@ -285,7 +229,7 @@ begin
   SetLength(Result.Contents.SubdirectoryNames, 0);
   SetLength(Result.Contents.MountPointNames, 0);
 
-  Result.Device := DeviceIDOfPath(Path);
+  Result.Device := VolumeDeviceOf(Path);
   if Result.Device = 0 then
     Exit;
   if (Length(AllowedDevices) > 0) and not DeviceInSet(AllowedDevices, Result.Device) then
@@ -309,7 +253,7 @@ begin
         begin
           if not IsSymLinkAttr(Search.Attr) then
           begin
-            ChildDev := DeviceIDOfPath(ChildPath);
+            ChildDev := VolumeDeviceOf(ChildPath);
             if (ChildDev <> 0) and (ChildDev <> Result.Device) then
               AppendName(Result.Contents.MountPointNames, Search.Name)
             else

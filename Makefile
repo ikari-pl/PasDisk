@@ -72,12 +72,13 @@ tests/test_dirreader: tests/test_dirreader.pas $(UNITDIR)/DirReader.pas
 
 tests/test_scancache: tests/test_scancache.pas $(UNITDIR)/FileTree.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas $(UNITDIR)/ScanCache.pas \
-		$(UNITDIR)/PlatformFS.pas
+		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_scancache tests/test_scancache.pas
 
 tests/test_incremental: tests/test_incremental.pas $(UNITDIR)/FileTree.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas \
-		$(UNITDIR)/Incremental.pas $(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas
+		$(UNITDIR)/Incremental.pas $(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
+		$(UNITDIR)/Volumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_incremental tests/test_incremental.pas
 
 tests/test_fsevents: tests/test_fsevents.pas $(UNITDIR)/FSEventsJournal.pas \
@@ -108,7 +109,7 @@ tests/test_traversal: tests/test_traversal.pas $(UNITDIR)/Traversal.pas \
 
 tests/test_volumeroot: tests/test_volumeroot.pas $(UNITDIR)/Incremental.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirReader.pas \
-		$(UNITDIR)/PlatformVolumes.pas
+		$(UNITDIR)/Volumes.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_volumeroot tests/test_volumeroot.pas
 
 clean:

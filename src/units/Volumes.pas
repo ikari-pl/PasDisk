@@ -49,6 +49,10 @@ function SelectVolumes(const Probe: TVolumeProbe): TVolumeInfoArray;
 { Models/DeviceInfo.swift VolumeCapacity.available. }
 function AvailableBytesOf(const Capacity: TVolumeCapacity): Int64;
 
+{ VolumeAttributes.swift isVolumeRoot: Path is the mount point of the volume
+  holding it (a firmlinked folder such as /Users is not). }
+function IsVolumeRoot(const Path: string): Boolean;
+
 implementation
 
 function AvailableBytesOf(const Capacity: TVolumeCapacity): Int64;
@@ -123,6 +127,23 @@ begin
       Probe.Capacities[I]);
   end;
   Result := SelectVolumes(Probe);
+end;
+
+
+function IsVolumeRoot(const Path: string): Boolean;
+var
+  Expanded, Parent, Mount: string;
+begin
+  Expanded := ExcludeTrailingPathDelimiter(ExpandFileName(Path));
+  if Expanded = '' then
+    Exit(True);
+  Parent := ExtractFileDir(Expanded);
+  if Parent = Expanded then
+    Exit(True);
+  Mount := MountPointOf(Expanded);
+  if Mount <> '' then
+    Exit(ExcludeTrailingPathDelimiter(Mount) = Expanded);
+  Result := VolumeDeviceOf(Expanded) <> VolumeDeviceOf(Parent);
 end;
 
 end.

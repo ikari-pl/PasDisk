@@ -41,6 +41,11 @@ function VolumeCapacityOf(const Path: string; out Capacity: TVolumeCapacity): Bo
 { Device id of the file system holding Path (st_dev / volume serial). }
 function DeviceOfPath(const Path: string; out Device: QWord): Boolean;
 
+{ Device id that defines volume boundaries: DeviceOfPath, which follows
+  symlinks like VolumeAttributes.swift deviceID(ofPath:); 0 when Path
+  cannot be stat'ed. }
+function VolumeDeviceOf(const Path: string): QWord;
+
 function IsReadablePath(const Path: string): Boolean;
 
 { Root of the system volume: '/' on Unix, the Windows system drive. }
@@ -404,5 +409,12 @@ begin
 end;
 {$ENDIF}
 {$ENDIF}
+
+
+function VolumeDeviceOf(const Path: string): QWord;
+begin
+  if not DeviceOfPath(Path, Result) then
+    Result := 0;
+end;
 
 end.

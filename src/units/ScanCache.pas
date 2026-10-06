@@ -10,7 +10,7 @@ unit ScanCache;
 interface
 
 uses
-  SysUtils, Classes, FileTree, DirReader;
+  SysUtils, Classes, FileTree;
 
 type
   TScanCacheHeader = record
@@ -48,7 +48,7 @@ procedure ScanCacheSetDirectory(const Dir: string);
 implementation
 
 uses
-  PlatformFS;
+  PlatformFS, PlatformVolumes;
 
 const
   FormatVersion: LongWord = 3;
@@ -219,7 +219,7 @@ begin
   Result := False;
   if Tree = nil then
     Exit;
-  Device := DeviceIDOfPath(RootPath);
+  Device := VolumeDeviceOf(RootPath);
   if Device = 0 then
     Exit;
   Dir := CacheDirectory;
@@ -286,7 +286,7 @@ begin
   SavedPath := string(PathBytes);
   if SavedPath <> RootPath then
     Exit;
-  LiveDevice := DeviceIDOfPath(RootPath);
+  LiveDevice := VolumeDeviceOf(RootPath);
   if (LiveDevice = 0) or (LiveDevice <> SavedDevice) then
     Exit;
   Result := True;

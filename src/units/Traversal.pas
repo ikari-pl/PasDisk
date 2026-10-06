@@ -81,14 +81,14 @@ var
   RootDevice, SystemDevice, DataDevice: QWord;
 begin
   Result := nil;
-  RootDevice := DeviceIDOfPath(ScanRoot);
+  RootDevice := VolumeDeviceOf(ScanRoot);
   if RootDevice = 0 then
     Exit;
   IncludeDevice(Result, RootDevice);
   if DataVolumeMountPoint = '' then
     Exit;
-  SystemDevice := DeviceIDOfPath('/');
-  DataDevice := DeviceIDOfPath(DataVolumeMountPoint);
+  SystemDevice := VolumeDeviceOf('/');
+  DataDevice := VolumeDeviceOf(DataVolumeMountPoint);
   if (SystemDevice = RootDevice) and (DataDevice <> 0) then
     IncludeDevice(Result, DataDevice);
 end;
@@ -119,7 +119,7 @@ begin
   Bytes := 0;
   Items := 0;
   try
-    RootDevice := DeviceIDOfPath(Path);
+    RootDevice := VolumeDeviceOf(Path);
     if RootDevice = 0 then
       Exit(Tree);
     Devices := Copy(AllowedDevices);
@@ -220,7 +220,7 @@ begin
   Bytes := 0;
   Items := 0;
   try
-    RootDevice := DeviceIDOfPath(Path);
+    RootDevice := VolumeDeviceOf(Path);
     { Gone since its parent was read: adopt an empty subtree, as Swift's
       TraversalScanner yields an empty tree (IncrementalUpdater.swift
       adoptScannedSubtree). }

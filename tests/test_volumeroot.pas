@@ -8,7 +8,7 @@ program test_volumeroot;
 
 uses
   SysUtils, Classes, Process, FileTree, DirReader, Traversal, Incremental,
-  PlatformFS;
+  PlatformFS, Volumes;
 
 var
   Fail: Boolean;

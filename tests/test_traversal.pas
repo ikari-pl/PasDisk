@@ -145,15 +145,15 @@ begin
   { ScanEngine.swift subtreeAllowedDevices: a scan of / also walks the Data
     volume behind the firmlinks; any other root stays on its own device. }
   Devs := SubtreeAllowedDevices('/');
-  Expect(DeviceInSet(Devs, DeviceIDOfPath('/')), '/ allows its own device');
+  Expect(DeviceInSet(Devs, VolumeDeviceOf('/')), '/ allows its own device');
   Data := DataVolumeMountPoint;
   if Data <> '' then
-    Expect(DeviceInSet(Devs, DeviceIDOfPath(Data)),
+    Expect(DeviceInSet(Devs, VolumeDeviceOf(Data)),
       '/ also allows the Data volume (' + Data + ')')
   else
     WriteLn('skip: no separate Data volume');
   Devs := SubtreeAllowedDevices(Root);
-  Expect((Length(Devs) = 1) and (Devs[0] = DeviceIDOfPath(Root)),
+  Expect((Length(Devs) = 1) and (Devs[0] = VolumeDeviceOf(Root)),
     'a non-root scan allows only its own device');
 end;
 
