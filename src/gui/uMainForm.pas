@@ -125,7 +125,6 @@ type
     FDeleteJob: TDeleteJob;
     FDeletePoll: TTimer;
     FDoneTimer: TTimer;
-    FStatus: TStatusBar;
     FCollector: TCollector;
     FTree: TFileTree;
     FCurrentPath: string;
@@ -471,11 +470,6 @@ end;
 
 procedure TMainForm.BuildUI;
 begin
-  FStatus := TStatusBar.Create(Self);
-  FStatus.Parent := Self;
-  FStatus.SimplePanel := True;
-  FStatus.SimpleText := 'Select a disk';
-
   { --- Picker --- }
   FPicker := TPanel.Create(Self);
   FPicker.Parent := Self;
@@ -786,7 +780,8 @@ end;
 procedure TMainForm.FormResize(Sender: TObject);
 begin
   FRefreshBtn.Left := Max(200, Width - FRefreshBtn.Width - 24);
-  FVolList.Width := Min(560, Max(420, Width - 96));
+  { DevicePickerView .frame(width: 460): the column does not stretch. }
+  FVolList.Width := 460;
   FVolList.Height := Max(200, Height - 260);
   FFolderBtn.Top := FVolList.Top + FVolList.Height + 12;
   FRefreshVolBtn.Top := FFolderBtn.Top;
@@ -976,8 +971,6 @@ begin
   FAnalysis.Visible := False;
   FPicker.Visible := True;
   FPicker.BringToFront;
-  FStatus.Visible := True;
-  FStatus.SimpleText := 'Select a disk to analyze';
   Caption := 'OpenDisk';
 end;
 
@@ -1014,7 +1007,6 @@ begin
     FPickerState.BringToFront;
   if FVolList.Items.Count > 0 then
     FVolList.ItemIndex := 0;
-  FStatus.SimpleText := Format('%d volume(s)', [Length(FVolumes)]);
 end;
 
 procedure TMainForm.VolListDrawItem(Control: TWinControl; Index: Integer;
@@ -1027,7 +1019,6 @@ var
   Bar, Fill: TRect;
   Used, Total: string;
   Selected: Boolean;
-  SelectedTrack: TColor;
 begin
   LB := Control as TListBox;
   if (Index < 0) or (Index > High(FVolumes)) then
@@ -1084,26 +1075,16 @@ begin
     if UsedFrac < 0 then UsedFrac := 0;
     if UsedFrac > 1 then UsedFrac := 1;
     Bar := Rect(ARect.Left + 56, ARect.Top + 45, ARect.Left + 180, ARect.Top + 51);
-    { StorageProgressBar: no outline, fully rounded ends. }
+    { StorageProgressBar: no outline, fully rounded ends; its colours do
+      not change with the row's highlight (the selected-row variant turned
+      black on an inactive window's light selection). }
     LB.Canvas.Brush.Style := bsSolid;
     LB.Canvas.Pen.Style := psClear;
-    if Selected then
-    begin
-      SelectedTrack := RGBToColor(
-        (Red(ColorToRGB(clHighlightText)) + Red(ColorToRGB(clHighlight))) div 2,
-        (Green(ColorToRGB(clHighlightText)) + Green(ColorToRGB(clHighlight))) div 2,
-        (Blue(ColorToRGB(clHighlightText)) + Blue(ColorToRGB(clHighlight))) div 2);
-      LB.Canvas.Brush.Color := SelectedTrack;
-    end
-    else
-      LB.Canvas.Brush.Color := ColorToRGB(CBarTrack);
+    LB.Canvas.Brush.Color := ColorToRGB(CBarTrack);
     LB.Canvas.RoundRect(Bar.Left, Bar.Top, Bar.Right, Bar.Bottom, 6, 6);
     Fill := Bar;
     Fill.Right := Fill.Left + Round((Fill.Right - Fill.Left) * UsedFrac);
-    if Selected then
-      LB.Canvas.Brush.Color := ColorToRGB(clHighlightText)
-    else
-      LB.Canvas.Brush.Color := ColorToRGB(CBarFill);
+    LB.Canvas.Brush.Color := AccentColor(ColorToRGB(CBarFill));
     if Fill.Right > Fill.Left then
       LB.Canvas.RoundRect(Fill.Left, Fill.Top, Fill.Right, Fill.Bottom, 6, 6);
     LB.Canvas.Pen.Style := psSolid;
@@ -1112,10 +1093,12 @@ begin
   LB.Canvas.MoveTo(ARect.Right - 18, ARect.Top + 26);
   LB.Canvas.LineTo(ARect.Right - 14, ARect.Top + 30);
   LB.Canvas.LineTo(ARect.Right - 18, ARect.Top + 34);
+  { Divider() between the GroupBox rows: the separator colour, inside
+    the box's content padding. }
   if Index < LB.Items.Count - 1 then
   begin
-    LB.Canvas.Pen.Color := ColorToRGB(SecondaryTextColor(CPanel));
-    LB.Canvas.Line(ARect.Left, ARect.Bottom - 1, ARect.Right, ARect.Bottom - 1);
+    LB.Canvas.Pen.Color := ColorToRGB(clBtnShadow);
+    LB.Canvas.Line(ARect.Left + 8, ARect.Bottom - 1, ARect.Right - 8, ARect.Bottom - 1);
   end;
 end;
 
@@ -1284,8 +1267,6 @@ begin
   ShowAnalysis;
   FCrumbBar.SetPath(Expanded, FRootName, Expanded);
   Caption := FRootName;
-  { The analysis window has its own status bar. }
-  FStatus.Visible := False;
   FScanStart := Now;
   FScanBar.SetTotals(0, 0);
   FScanBar.SetScanning(0, 0, sspScanning, ScanFraction(0), FScanStart);
