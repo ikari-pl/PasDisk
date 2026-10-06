@@ -24,7 +24,8 @@ opendisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirReader.pas \
 		$(UNITDIR)/RingsSVG.pas $(UNITDIR)/SearchIndex.pas \
 		$(UNITDIR)/Incremental.pas $(UNITDIR)/FSEventsJournal.pas \
 		$(UNITDIR)/ScanCache.pas $(UNITDIR)/Volumes.pas \
-		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas
+		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
+		$(UNITDIR)/PlatformShell.pas
 	$(FPC) $(BUILDFLAGS) -oopendisk $(SRC)/opendisk.lpr
 
 # Cocoa LCL needs Xcode ld-classic — new ld (1267+) rejects FPC ObjC method lists.

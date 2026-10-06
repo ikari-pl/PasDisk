@@ -13,7 +13,6 @@ BASELINE="
 src/units/DirReader.pas
 src/units/ProtectedPaths.pas
 src/units/FSEventsJournal.pas
-src/opendisk.lpr
 "
 BASELINE="${CHECK_PLATFORM_BASELINE-$BASELINE}"
 

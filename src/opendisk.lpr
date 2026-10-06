@@ -6,10 +6,11 @@ program opendisk;
 
 uses
   {$IFDEF UNIX}
-  cthreads, Unix,
+  cthreads,
   {$ENDIF}
   SysUtils, Classes, DateUtils, FileTree, Traversal, Formatters, ChartItem, RingsSVG,
-  SearchIndex, Incremental, FSEventsJournal, ScanCache, Volumes, PlatformFS;
+  SearchIndex, Incremental, FSEventsJournal, ScanCache, Volumes, PlatformFS,
+  PlatformShell;
 
 var
   LastProgressAt: QWord;
@@ -246,13 +247,7 @@ procedure OpenInBrowser(const FilePath: string);
 begin
   WriteLn('Open this file in a browser:');
   WriteLn(FilePath);
-  {$IFDEF DARWIN}
-  try
-    ExecuteProcess('/usr/bin/open', FilePath);
-  except
-    { path printed above }
-  end;
-  {$ENDIF}
+  OpenDocument(FilePath);
 end;
 
 procedure CmdView(const Path: string);
