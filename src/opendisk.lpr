@@ -8,7 +8,7 @@ uses
   {$IFDEF UNIX}
   cthreads,
   {$ENDIF}
-  SysUtils, Classes, DateUtils, FileTree, Traversal, Formatters, ChartItem, RingsSVG,
+  SysUtils, Classes, DateUtils, Math, FileTree, Traversal, Formatters, ChartItem, RingsSVG,
   SearchIndex, Incremental, ChangeJournal, JournalFactory, ScanCache, Volumes, PlatformFS,
   PlatformShell;
 
@@ -308,29 +308,24 @@ begin
 end;
 
 procedure CmdSearch(const Path, Query: string);
+const
+  Shown = 40;
 var
   Tree: TFileTree;
   Index: TSearchIndex;
-  Hits: TFPList;
+  Found: TSearchResults;
   I: Integer;
-  Hit: PSearchHit;
 begin
   Tree := DoScan(Path);
   Index := TSearchIndex.Create(Tree, True);
-  Hits := TFPList.Create;
   try
-    Index.Search(Query, ssAll, Hits, 40);
-    WriteLn('Matches for "', Query, '": ', Hits.Count);
+    Found := Index.Search(Query, ssAll);
+    WriteLn('Matches for "', Query, '": ', Found.TotalMatches);
     WriteLn;
-    for I := 0 to Hits.Count - 1 do
-    begin
-      Hit := PSearchHit(Hits[I]);
+    for I := 0 to Min(Shown, Length(Found.Hits)) - 1 do
       WriteLn(Format('%10s  %s',
-        [FormatFileSize(Hit^.Size), Index.Tree.PathOf(Hit^.ID)]));
-    end;
+        [FormatFileSize(Found.Hits[I].Size), Index.Tree.PathOf(Found.Hits[I].ID)]));
   finally
-    FreeSearchHits(Hits);
-    Hits.Free;
     Index.Free;
   end;
 end;

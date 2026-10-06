@@ -21,7 +21,7 @@ all: opendisk
 opendisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/Formatters.pas \
 		$(UNITDIR)/ChartItem.pas $(UNITDIR)/RingsLayout.pas \
-		$(UNITDIR)/RingsSVG.pas $(UNITDIR)/SearchIndex.pas \
+		$(UNITDIR)/RingsSVG.pas $(UNITDIR)/SearchIndex.pas $(UNITDIR)/PlatformTextFold.pas \
 		$(UNITDIR)/Incremental.pas $(UNITDIR)/ChangeJournal.pas $(UNITDIR)/PlatformChangeJournal.pas $(UNITDIR)/JournalFactory.pas \
 		$(UNITDIR)/ScanCache.pas $(UNITDIR)/Volumes.pas \
 		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
@@ -64,7 +64,7 @@ test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 		tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
 		tests/test_traversal tests/test_volumeroot tests/test_texttrim \
-		tests/test_formatters
+		tests/test_formatters tests/test_search
 	./tests/test_check_platform.sh
 	./tools/check-platform.sh
 	./tests/test_filetree
@@ -80,6 +80,7 @@ test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 	./tests/test_volumeroot
 	./tests/test_texttrim
 	./tests/test_formatters
+	./tests/test_search
 
 tests/test_filetree: tests/test_filetree.pas $(UNITDIR)/FileTree.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_filetree tests/test_filetree.pas
@@ -139,11 +140,15 @@ tests/test_formatters: tests/test_formatters.pas $(UNITDIR)/Formatters.pas \
 		tests/data/bytecount_en_PL.tsv
 	$(FPC) $(BUILDFLAGS) -otests/test_formatters tests/test_formatters.pas
 
+tests/test_search: tests/test_search.pas $(UNITDIR)/SearchIndex.pas \
+		$(UNITDIR)/PlatformTextFold.pas $(UNITDIR)/FileTree.pas
+	$(FPC) $(BUILDFLAGS) -otests/test_search tests/test_search.pas
+
 clean:
 	rm -f opendisk opendisk-gui tests/test_filetree tests/test_dirreader \
 		tests/test_scancache tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
 		tests/test_traversal tests/test_volumeroot tests/test_texttrim \
-		tests/test_formatters *.o *.ppu $(UNITDIR)/*.o $(UNITDIR)/*.ppu \
+		tests/test_formatters tests/test_search *.o *.ppu $(UNITDIR)/*.o $(UNITDIR)/*.ppu \
 		tests/*.o tests/*.ppu link*.res linkfiles*.res ppas.sh
 	rm -rf src/gui/lib $(APP)

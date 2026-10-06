@@ -26,6 +26,8 @@ type
     FileID: QWord;
   end;
 
+  TBooleanArray = array of Boolean;
+
   TFileTree = class
   private
     type
@@ -86,6 +88,10 @@ type
       when the node carries 0, is at least Minimum (FileTree.swift
       reachableFiles(allocatedAtLeast:)). }
     procedure ReachableFiles(AllocatedAtLeast: Int64; Dest: TFPList);
+    { Per node: reachable from the root through child links (FileTree.swift
+      reachabilityBitmap); detached nodes left by incremental updates are
+      False. }
+    function ReachabilityBitmap: TBooleanArray;
     { Hard-link record of ID, if any. }
     function HardLinkOf(ID: TNodeID; out Key: THardLinkKey;
       out AllocatedSize: Int64): Boolean;
@@ -225,17 +231,17 @@ begin
   FHardLinks[Idx].AllocatedSize := AllocatedSize;
 end;
 
-procedure TFileTree.ReachableFiles(AllocatedAtLeast: Int64; Dest: TFPList);
+function TFileTree.ReachabilityBitmap: TBooleanArray;
 var
-  Reachable: array of Boolean;
   Stack: array of TNodeID;
-  Top, I, Idx: Integer;
+  Top: Integer;
   Current, Child: TNodeID;
 begin
-  Dest.Clear;
-  SetLength(Reachable, Length(FNodes));
+  SetLength(Result, Length(FNodes));
+  if Length(FNodes) = 0 then
+    Exit;
   SetLength(Stack, Length(FNodes));
-  Reachable[RootID] := True;
+  Result[RootID] := True;
   Stack[0] := RootID;
   Top := 0;
   while Top >= 0 do
@@ -245,15 +251,24 @@ begin
     Child := FNodes[Current].FirstChild;
     while Child <> NoNode do
     begin
-      if not Reachable[Child] then
+      if not Result[Child] then
       begin
-        Reachable[Child] := True;
+        Result[Child] := True;
         Inc(Top);
         Stack[Top] := Child;
       end;
       Child := FNodes[Child].NextSibling;
     end;
   end;
+end;
+
+procedure TFileTree.ReachableFiles(AllocatedAtLeast: Int64; Dest: TFPList);
+var
+  Reachable: TBooleanArray;
+  I, Idx: Integer;
+begin
+  Dest.Clear;
+  Reachable := ReachabilityBitmap;
   for I := 0 to High(FNodes) do
   begin
     if (not Reachable[I]) or FNodes[I].IsDirectory then
