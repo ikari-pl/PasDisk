@@ -16,7 +16,7 @@ uses
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
-  PlatformQuickLook, ThinSplitter;
+  PlatformQuickLook, ThinSplitter, PlatformToolbar;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -200,6 +200,9 @@ type
       const ScreenPt: TPoint);
     procedure ChartMenuHookTick(Sender: TObject);
     procedure QuickLookRow(Row: Integer);
+    procedure UpdateSubtitle(TotalBytes: Int64);
+    procedure ToolbarSearch(const Query: string);
+    procedure SetUpToolbar;
     procedure BodyResize(Sender: TObject);
     procedure SplitterMoved(Sender: TObject);
     procedure SplitterDrag(Sender: TObject; var NewWidth: Integer);
@@ -466,6 +469,35 @@ begin
   if GetEnvironmentVariable('OPENDISK_GUI_SCAN') <> '' then
     StartScan(GetEnvironmentVariable('OPENDISK_GUI_SCAN'), '', 0, 0);
   SetUpFileDrag;
+  SetUpToolbar;
+end;
+
+{ DiskAnalysisView .toolbar: the native toolbar replaces the row's
+  Unmount, search field and Refresh, leaving the breadcrumb bar
+  (BreadcrumbBar above the split; Swift has no back button). Without a
+  native toolbar the row keeps them. }
+procedure TMainForm.SetUpToolbar;
+var
+  H: TToolbarHandlers;
+begin
+  if not NativeToolbarAvailable then
+    Exit;
+  FDisksBtn.Visible := False;
+  FBackBtn.Visible := False;
+  FRefreshBtn.Visible := False;
+  FSearchEdit.Visible := False;
+  { BreadcrumbBar .padding(.horizontal, 14).padding(.vertical, 7). }
+  FNav.Height := 42;
+  FCrumbBar.AnchorSideRight.Control := nil;
+  FCrumbBar.Anchors := [akLeft, akTop];
+  FCrumbBar.SetBounds(14, 7, FNav.ClientWidth - 28, 28);
+  FCrumbBar.Anchors := [akLeft, akTop, akRight];
+  HandleNeeded;
+  H.OnUnmount := @DisksClick;
+  H.OnRefresh := @RefreshClick;
+  H.OnSearch := @ToolbarSearch;
+  InstallWindowToolbar(Self, H);
+  ShowWindowToolbar(Self, FMode in [umAnalysis, umScanning]);
 end;
 
 procedure TMainForm.BuildUI;
@@ -790,6 +822,9 @@ end;
 
 procedure TMainForm.SearchChange(Sender: TObject);
 begin
+  { The toolbar field shows the same text (cleared, or set by a hook). }
+  if NativeToolbarAvailable and (ToolbarSearchText <> FSearchEdit.Text) then
+    SetToolbarSearchText(FSearchEdit.Text);
   FSearchQuery := Trim(FSearchEdit.Text);
   FSearch.SetQuery(FSearchQuery);
   if (FSearchQuery <> '') and not FSearch.HasIndex and (FTree <> nil) then
@@ -972,6 +1007,8 @@ begin
   FPicker.Visible := True;
   FPicker.BringToFront;
   Caption := 'OpenDisk';
+  ShowWindowToolbar(Self, False);
+  SetWindowSubtitle(Self, '');
 end;
 
 procedure TMainForm.ShowAnalysis;
@@ -982,6 +1019,22 @@ begin
   FAnalysis.BringToFront;
   HideAnalysisState;
   StyleChrome;
+  ShowWindowToolbar(Self, True);
+end;
+
+{ navigationSubtitle: the displayed total, none while it is zero. }
+procedure TMainForm.UpdateSubtitle(TotalBytes: Int64);
+begin
+  if TotalBytes > 0 then
+    SetWindowSubtitle(Self, FormatFileSize(TotalBytes))
+  else
+    SetWindowSubtitle(Self, '');
+end;
+
+procedure TMainForm.ToolbarSearch(const Query: string);
+begin
+  if FSearchEdit.Text <> Query then
+    FSearchEdit.Text := Query;
 end;
 
 procedure TMainForm.RefreshVolumes;
@@ -1180,7 +1233,8 @@ begin
   { handleQuickLookKey: Space without Cmd/Option/Control toggles Quick
     Look, except while typing in the search field. }
   else if (Key = VK_SPACE) and (Shift * [ssMeta, ssAlt, ssCtrl] = []) and
-    (FMode = umAnalysis) and not FSearchEdit.Focused then
+    (FMode = umAnalysis) and not FSearchEdit.Focused and
+    not ToolbarSearchFocused(Self) then
   begin
     if QuickLookVisible then
       CloseQuickLook
@@ -1195,8 +1249,13 @@ begin
   end
   else if (Key = VK_F) and (ssMeta in Shift) and (FMode in [umAnalysis, umScanning]) then
   begin
-    FSearchEdit.SetFocus;
-    FSearchEdit.SelectAll;
+    if NativeToolbarAvailable then
+      FocusToolbarSearch(Self)
+    else
+    begin
+      FSearchEdit.SetFocus;
+      FSearchEdit.SelectAll;
+    end;
     Key := 0;
   end
   else if (Key = VK_R) and (ssMeta in Shift) and (FMode = umAnalysis) then
@@ -1269,6 +1328,7 @@ begin
   Caption := FRootName;
   FScanStart := Now;
   FScanBar.SetTotals(0, 0);
+  UpdateSubtitle(0);
   FScanBar.SetScanning(0, 0, sspScanning, ScanFraction(0), FScanStart);
   RefreshVolumeCapacity;
   { Disks stays enabled: it cancels the scan. }
@@ -1515,6 +1575,7 @@ begin
     UpdateSortHeader;
     FBackBtn.Enabled := FBreadcrumbs.Count > 0;
     FScanBar.SetTotals(CleanableTotal(Entries), FList.Items.Count);
+    UpdateSubtitle(CleanableTotal(Entries));
     Exit;
   end;
   Node := ResolveNode(FTree, FRootPath, APath);
@@ -1534,6 +1595,7 @@ begin
   FBackBtn.Enabled := FBreadcrumbs.Count > 0;
   { displayedTotalBytes and rootItems.count. }
   FScanBar.SetTotals(FTree.SizeOf(Node), FList.Items.Count);
+  UpdateSubtitle(FTree.SizeOf(Node));
 end;
 
 procedure TMainForm.UpdateSortHeader;

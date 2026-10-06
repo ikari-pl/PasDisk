@@ -126,8 +126,8 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | "Scan Folder…" open panel | DevicePickerView.swift:46-49, 141-157 | gui/uMainForm.pas:521-528 | N/A | Done | od-31j.11 | `SelectDirectory` starts in the home folder. |
 | Empty picker state ("No Disks Found") | DevicePickerView.swift:29-35 | — | N/A | Done | od-31j.18.12 | 07394ea. |
 | Breadcrumb bar (clickable segments, hover, chevrons) | Views/Components/BreadcrumbBar.swift | gui/BreadcrumbBar.pas; gui/uMainForm.pas CrumbNavigate | N/A | Done | od-31j.18.2 | 93ceb04. Deviation: an over-long trail collapses its middle and middle-truncates names instead of scrolling horizontally. |
-| Toolbar: Unmount (Cmd-[, confirmation dialog), Refresh (Cmd-R) | DiskAnalysisView.swift:97-122, 189-195 | gui/uMainForm.pas DisksClick/RefreshClick/FormKeyDown | N/A | Partial | od-31j.18.19 | Behaviour done (717ffaf): Unmount + confirmation, Cmd-[, Refresh rescans the current folder, Cmd-R, window title. Native NSToolbar + size subtitle missing. |
-| Window title/subtitle (folder name / displayed size) | DiskAnalysisView.swift:94-95, 496-506 | gui/uMainForm.pas:601 | N/A | Partial | od-31j.18.2 | No subtitle. The title does not follow navigation. |
+| Toolbar: Unmount (Cmd-[, confirmation dialog), Refresh (Cmd-R) | DiskAnalysisView.swift:97-122, 189-195 | gui/PlatformToolbar.pas; gui/uMainForm.pas (SetUpToolbar, DisksClick, RefreshClick) | N/A | Done | od-31j.18.19 | Native unified NSToolbar: Unmount (eject, navigational, before the title), search (NSSearchToolbarItem), Refresh (arrow.clockwise); shown only while analysing. The LCL row is the fallback off macOS. |
+| Window title/subtitle (folder name / displayed size) | DiskAnalysisView.swift:94-95, 496-506 | gui/uMainForm.pas (ShowNode, UpdateSubtitle); gui/PlatformToolbar.pas (SetWindowSubtitle) | N/A | Done | od-31j.18.2 | The title follows the shown folder; the subtitle is the displayed total, none while zero. |
 | Back via the rings center / breadcrumb stack | DiskAnalysisView.swift:544-574 | gui/uMainForm.pas:772-773, 809-818 | N/A | Done | od-31j.11 | |
 | Navigating to an unscanned path triggers a scan of it | DiskAnalysisView.swift:569-574 | — | N/A | Missing | — | |
 | List/chart split 60/40, resizable, minimum widths | DiskAnalysisView.swift:51-67 | gui/uMainForm.pas (BodyResize, SplitterDrag); gui/ThinSplitter.pas | N/A | Done | od-31j.18.4 | List 60 % (min 320), chart 40 % (min 280), ratio kept on resize, 1-pt draggable divider; window 1100x720, min 900x600. LCL TSplitter is not used (the list stopped painting with it on Cocoa). |
@@ -231,8 +231,8 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 78 |
-| Partial | 3 | 8 |
+| Done | 41 | 80 |
+| Partial | 3 | 6 |
 | Missing | 1 | 7 |
 | N/A | 58 | 10 |
 | Unverified | 2 | 2 |
