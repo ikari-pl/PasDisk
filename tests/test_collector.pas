@@ -46,6 +46,63 @@ begin
   {$ENDIF}
 end;
 
+procedure TestAddManyAndDragOut;
+var
+  C: TCollector;
+  Dir: string;
+  Files: array of TCollectedEntry;
+  I: Integer;
+begin
+  Dir := Root + '/addmany';
+  ForceDirectories(Dir);
+  SetLength(Files, 3);
+  for I := 0 to 2 do
+  begin
+    Files[I].Name := 'f' + IntToStr(I);
+    Files[I].Path := Dir + '/' + Files[I].Name;
+    Files[I].Size := 10 * (I + 1);
+    Files[I].IsDirectory := False;
+    WriteText(Files[I].Path, 'x');
+  end;
+  C := TCollector.Create;
+  try
+    { add(_ files:) is one recordingUndo. }
+    Expect(C.AddMany(Files) = 3, 'AddMany stages all three');
+    Expect(C.UndoCount = 1, 'AddMany records a single undo step');
+    Expect(C.AddMany(Files) = 0, 'AddMany of staged files stages none');
+    Expect(C.UndoCount = 1, 'a no-op AddMany records no undo');
+    C.RemoveMany([Files[0].Path, Files[1].Path, '/nonexistent']);
+    Expect((C.Count = 1) and (C.UndoCount = 2), 'RemoveMany is one undo step');
+    Expect(C.Undo and (C.Count = 3), 'undo restores both removed items');
+
+    { Drag-out dropped outside the keep zones unstages, as one step. }
+    C.BeginDragOut([Files[0].Path, Files[2].Path, '/not/staged']);
+    Expect(C.IsDraggingOut, 'drag-out pending');
+    C.ResolveDragOut(False);
+    Expect((C.Count = 1) and not C.IsDraggingOut, 'drop outside unstages the dragged items');
+    Expect(C.Undo and (C.Count = 3), 'one undo brings the dragged items back');
+    { Dropped back on the bar: kept. }
+    C.BeginDragOut([Files[1].Path]);
+    C.ResolveDragOut(True);
+    Expect(C.Count = 3, 'drop on a keep zone keeps the items');
+    { endDragOut with no operation (dropped nowhere) unstages. }
+    C.BeginDragOut([Files[1].Path]);
+    C.EndDragOut(False);
+    Expect((C.Count = 2) and not C.Contains(Files[1].Path), 'drag ended with no operation unstages');
+    { Another app accepted the drop: kept, pending until cancelled. }
+    C.BeginDragOut([Files[0].Path]);
+    C.EndDragOut(True);
+    Expect(C.IsDraggingOut and (C.Count = 2), 'accepted drop keeps items');
+    C.CancelDragOut;
+    Expect(not C.IsDraggingOut, 'cancel clears the drag-out');
+  finally
+    C.Free;
+  end;
+  for I := 0 to 2 do
+    DeleteFile(Files[I].Path);
+  RemoveDir(Dir);
+end;
+
 procedure TestUndoOnlyOnChange;
 var
   C: TCollector;
@@ -193,6 +250,7 @@ begin
   WriteText(Root + '/dir/a.txt', 'a');
   try
     TestUndoOnlyOnChange;
+    TestAddManyAndDragOut;
     TestNestedDedup;
     TestSymlinkNeverFollowed;
     TestFailedItemsStayStaged;

@@ -54,12 +54,29 @@ type
     function Finished: Boolean;
   end;
 
+  { One file for AddMany (Collector.swift CollectedFile). }
+  TCollectedEntry = record
+    Path: string;
+    Name: string;
+    Size: Int64;
+    IsDirectory: Boolean;
+  end;
+
   TCollector = class
   private
     FItems: TFPList;
     FUndo: TFPList;
+    { recordingUndo: one snapshot per change, taken before the first
+      mutation of an operation. }
+    FUndoTaken: Boolean;
+    { Collector.swift draggingOut: paths being dragged out of the
+      collector, nil when no drag-out is pending. }
+    FDraggingOut: TStringList;
     FBlockedNotice: string;
     FFailures: TStringList;
+    function AppendOne(const Path, Name: string; Size: Int64;
+      IsDirectory: Boolean): Boolean;
+    procedure BeginChange;
     procedure FreeItems(List: TFPList);
     procedure PushUndo;
     function IndexOfPath(const Path: string): Integer;
@@ -68,7 +85,23 @@ type
     destructor Destroy; override;
     procedure Clear;
     function Add(const Path, Name: string; Size: Int64; IsDirectory: Boolean): Boolean;
+    { add(_ files:): stages several files as one undo step; returns how
+      many were staged. BlockedNotice names the last refused one. }
+    function AddMany(const Files: array of TCollectedEntry): Integer;
     procedure Remove(const Path: string);
+    { Removes several paths as one undo step. }
+    procedure RemoveMany(const Paths: array of string);
+    { beginDragOut: remembers which staged paths are being dragged out. }
+    procedure BeginDragOut(const Paths: array of string);
+    function IsDraggingOut: Boolean;
+    { endDragOut: Accepted is a non-empty drag operation (another app took
+      the drop): the items stay and the caller clears the drag-out after
+      2 s with CancelDragOut. Otherwise the drop resolves as outside. }
+    procedure EndDragOut(Accepted: Boolean);
+    { resolveDragOut: a drop inside a keep zone (the bar or its list)
+      keeps the items; anywhere else unstages them. }
+    procedure ResolveDragOut(InKeepZone: Boolean);
+    procedure CancelDragOut;
     function Undo: Boolean;
     function CanUndo: Boolean;
     function UndoCount: Integer;
@@ -108,6 +141,7 @@ begin
   FUndo.Free;
   FItems.Free;
   FFailures.Free;
+  FDraggingOut.Free;
   inherited Destroy;
 end;
 
@@ -126,7 +160,8 @@ begin
   { recordingUndo: clearing an empty collector is not a change. }
   if FItems.Count = 0 then
     Exit;
-  PushUndo;
+  FUndoTaken := False;
+  BeginChange;
   FreeItems(FItems);
   FBlockedNotice := '';
 end;
@@ -172,7 +207,16 @@ begin
   end;
 end;
 
-function TCollector.Add(const Path, Name: string; Size: Int64;
+procedure TCollector.BeginChange;
+begin
+  if not FUndoTaken then
+  begin
+    PushUndo;
+    FUndoTaken := True;
+  end;
+end;
+
+function TCollector.AppendOne(const Path, Name: string; Size: Int64;
   IsDirectory: Boolean): Boolean;
 var
   Reason: string;
@@ -181,7 +225,6 @@ var
   Existing: TCollectedFile;
 begin
   Result := False;
-  FBlockedNotice := '';
   if (Path = '') or (Copy(Path, 1, 2) = '::') then
     Exit;
   if not (FileExists(Path) or DirectoryExists(Path)) then
@@ -189,7 +232,7 @@ begin
   Reason := ProtectedReason(Path);
   if Reason <> '' then
   begin
-    FBlockedNotice := '"' + Name + '" ' + Reason;
+    FBlockedNotice := '“' + Name + '” ' + Reason;
     Exit;
   end;
   if Contains(Path) then
@@ -201,7 +244,7 @@ begin
        (Copy(Path, 1, Length(Existing.Path) + 1) = Existing.Path + DirectorySeparator) then
       Exit;
   end;
-  PushUndo;
+  BeginChange;
   if IsDirectory then
   begin
     I := 0;
@@ -226,16 +269,95 @@ begin
   Result := True;
 end;
 
-procedure TCollector.Remove(const Path: string);
-var
-  Idx: Integer;
+function TCollector.Add(const Path, Name: string; Size: Int64;
+  IsDirectory: Boolean): Boolean;
 begin
-  Idx := IndexOfPath(Path);
-  if Idx < 0 then
+  FBlockedNotice := '';
+  FUndoTaken := False;
+  Result := AppendOne(Path, Name, Size, IsDirectory);
+end;
+
+function TCollector.AddMany(const Files: array of TCollectedEntry): Integer;
+var
+  I: Integer;
+  Notice: string;
+begin
+  Result := 0;
+  Notice := '';
+  FBlockedNotice := '';
+  FUndoTaken := False;
+  for I := 0 to High(Files) do
+  begin
+    if AppendOne(Files[I].Path, Files[I].Name, Files[I].Size, Files[I].IsDirectory) then
+      Inc(Result);
+    if FBlockedNotice <> '' then
+      Notice := FBlockedNotice;
+  end;
+  FBlockedNotice := Notice;
+end;
+
+procedure TCollector.Remove(const Path: string);
+begin
+  RemoveMany([Path]);
+end;
+
+procedure TCollector.RemoveMany(const Paths: array of string);
+var
+  I, Idx: Integer;
+begin
+  FUndoTaken := False;
+  for I := 0 to High(Paths) do
+  begin
+    Idx := IndexOfPath(Paths[I]);
+    if Idx < 0 then
+      Continue;
+    BeginChange;
+    TCollectedFile(FItems[Idx]).Free;
+    FItems.Delete(Idx);
+  end;
+end;
+
+procedure TCollector.BeginDragOut(const Paths: array of string);
+var
+  I: Integer;
+begin
+  FreeAndNil(FDraggingOut);
+  FDraggingOut := TStringList.Create;
+  for I := 0 to High(Paths) do
+    if Contains(Paths[I]) then
+      FDraggingOut.Add(Paths[I]);
+end;
+
+function TCollector.IsDraggingOut: Boolean;
+begin
+  Result := FDraggingOut <> nil;
+end;
+
+procedure TCollector.EndDragOut(Accepted: Boolean);
+begin
+  if (FDraggingOut = nil) or Accepted then
     Exit;
-  PushUndo;
-  TCollectedFile(FItems[Idx]).Free;
-  FItems.Delete(Idx);
+  ResolveDragOut(False);
+end;
+
+procedure TCollector.ResolveDragOut(InKeepZone: Boolean);
+var
+  Paths: array of string;
+  I: Integer;
+begin
+  if FDraggingOut = nil then
+    Exit;
+  SetLength(Paths, FDraggingOut.Count);
+  for I := 0 to FDraggingOut.Count - 1 do
+    Paths[I] := FDraggingOut[I];
+  FreeAndNil(FDraggingOut);
+  if not InKeepZone then
+    RemoveMany(Paths);
+end;
+
+procedure TCollector.CancelDragOut;
+begin
+  FreeAndNil(FDraggingOut);
 end;
 
 function TCollector.Undo: Boolean;

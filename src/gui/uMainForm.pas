@@ -1872,12 +1872,21 @@ end;
 { collector.add(files): protected paths are refused with a notice. }
 procedure TMainForm.StageItems(const Items: array of TFolderItem);
 var
+  Files: array of TCollectedEntry;
   I: Integer;
 begin
+  Files := nil;
+  SetLength(Files, Length(Items));
   for I := 0 to High(Items) do
-    if not FCollector.Add(Items[I].Path, Items[I].Name, Items[I].Size,
-      Items[I].IsDirectory) and (FCollector.BlockedNotice <> '') then
-      FCollectorBar.ShowNotice(FCollector.BlockedNotice);
+  begin
+    Files[I].Path := Items[I].Path;
+    Files[I].Name := Items[I].Name;
+    Files[I].Size := Items[I].Size;
+    Files[I].IsDirectory := Items[I].IsDirectory;
+  end;
+  FCollector.AddMany(Files);
+  if FCollector.BlockedNotice <> '' then
+    FCollectorBar.ShowNotice(FCollector.BlockedNotice);
   RefreshCollector;
   RefreshList;
 end;
