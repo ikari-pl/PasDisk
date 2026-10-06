@@ -31,6 +31,7 @@ and Linux**.
 ```sh
 make            # → ./opendisk
 make gui        # → ./opendisk-gui  (needs Xcode ld-classic wrapper)
+make app        # → ./OpenDisk.app (bundle with Info.plist + icon, ad-hoc signed)
 make test
 ```
 

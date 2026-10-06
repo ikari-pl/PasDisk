@@ -14,7 +14,7 @@ BUILDFLAGS = -Mobjfpc -Scghi -O2 -g -gl -Fi$(UNITDIR) -Fu$(UNITDIR) \
 	$(if $(UNIVINT),-Fu$(UNIVINT)) \
 	-k'-framework CoreFoundation' -k'-framework CoreServices' -FE. -FU.
 
-.PHONY: all clean test gui check-platform
+.PHONY: all clean test gui app check-platform
 
 all: opendisk
 
@@ -34,6 +34,20 @@ gui: src/gui/OpenDiskGUI.lpi tools/ldwrap/ld
 	$(LAZBUILD) --lazarusdir=$(LAZARUSDIR) --compiler=$$(command -v $(FPC)) \
 		--opt="-FD$(LDWRAP)" \
 		src/gui/OpenDiskGUI.lpi
+
+# OpenDisk.app: the GUI binary copied (not linked) into a proper bundle with
+# packaging/Info.plist and icon, ad-hoc signed so Finder and the Dock
+# launch it cleanly.
+APP = OpenDisk.app
+app: gui packaging/Info.plist packaging/OpenDisk.icns
+	rm -rf $(APP)
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
+	cp opendisk-gui $(APP)/Contents/MacOS/OpenDisk
+	cp packaging/Info.plist $(APP)/Contents/Info.plist
+	cp packaging/OpenDisk.icns $(APP)/Contents/Resources/OpenDisk.icns
+	printf 'APPL????' > $(APP)/Contents/PkgInfo
+	codesign --force --sign - $(APP)
+	plutil -lint $(APP)/Contents/Info.plist
 
 # OS-specific code stays in src/units/Platform*.pas (od-31j.29).
 check-platform:
@@ -122,6 +136,7 @@ clean:
 	rm -f opendisk opendisk-gui tests/test_filetree tests/test_dirreader \
 		tests/test_scancache tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
-		tests/test_traversal tests/test_volumeroot *.o *.ppu $(UNITDIR)/*.o $(UNITDIR)/*.ppu \
+		tests/test_traversal tests/test_volumeroot tests/test_texttrim \
+		*.o *.ppu $(UNITDIR)/*.o $(UNITDIR)/*.ppu \
 		tests/*.o tests/*.ppu link*.res linkfiles*.res ppas.sh
-	rm -rf src/gui/lib
+	rm -rf src/gui/lib $(APP)
