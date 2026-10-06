@@ -14,7 +14,7 @@ uses
   StdCtrls, ComCtrls, Buttons, Menus, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
-  DisplayList, CleanableSpace, FullDiskAccessUI;
+  DisplayList, CleanableSpace, FullDiskAccessUI, SearchController;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -82,6 +82,18 @@ type
     { DiskAnalysisView columnHeader: 'Name' and 'Size', chevron on the
       active column. }
     FListHeader: TPaintBox;
+    { Name search (od-31j.18.5): DiskAnalysisView .searchable + SearchResultsView. }
+    FSearch: TSearchController;
+    FSearchEdit: TEdit;
+    FSearchTimer: TTimer;
+    FSearchEmpty: TEmptyStateView;
+    FSearchQuery: string;
+    FSearchItems: TFolderItems;
+    FSearchTotal: Integer;
+    FSearchPartial: Boolean;
+    FSearchRunning: Boolean;
+    { The account home, for '~' in search result locations. }
+    FHome: string;
     FList: TListBox;
     FSortField: TListSortField;
     FSortAscending: Boolean;
@@ -178,6 +190,13 @@ type
     procedure SettingsClick(Sender: TObject);
     procedure StartupPromptTick(Sender: TObject);
     procedure BuildMenus;
+    procedure SearchChange(Sender: TObject);
+    function RowSizeOf(ID: TNodeID): Int64;
+    procedure SearchKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure SearchTick(Sender: TObject);
+    procedure ClearSearch;
+    procedure OpenSearchResult(Index: Integer);
+    procedure UpdateSearchEmpty;
     procedure OpenFDA(Sender: TObject);
     procedure RelaunchForFDA(Sender: TObject);
     procedure RescanState(Sender: TObject);
@@ -197,7 +216,7 @@ var
 implementation
 
 uses
-  LCLType, LCLIntf, PlatformFS, PlatformImages, PlatformFullDiskAccess,
+  LCLType, LCLIntf, PlatformFS, PlatformLocale, PlatformImages, PlatformFullDiskAccess,
   PlatformShell;
 
 const
@@ -213,6 +232,8 @@ const
 const
   { List object of the synthetic 'Purgeable Space' row (never a node). }
   PurgeableRowID = TNodeID(-2);
+  { Search result rows: SearchRowBase - index into FSearchItems. }
+  SearchRowBase = TNodeID(-1000);
 
 threadvar
   { The scan thread running on this OS thread: TScanProgress and
@@ -516,8 +537,28 @@ begin
   FRefreshBtn.Anchors := [akTop, akRight];
   FRefreshBtn.OnClick := @RefreshClick;
 
-  { The trail fills the space up to the Refresh button and follows resizes. }
-  FCrumbBar.AnchorSideRight.Control := FRefreshBtn;
+  { .searchable(placement: .toolbar, prompt: "Search scanned files and
+    folders"). }
+  FSearchEdit := TEdit.Create(Self);
+  FSearchEdit.Parent := FNav;
+  FSearchEdit.TextHint := 'Search scanned files and folders';
+  FSearchEdit.Width := 240;
+  FSearchEdit.Top := 13;
+  FSearchEdit.AnchorSideRight.Control := FRefreshBtn;
+  FSearchEdit.AnchorSideRight.Side := asrLeft;
+  FSearchEdit.BorderSpacing.Right := 8;
+  FSearchEdit.Anchors := [akTop, akRight];
+  FSearchEdit.OnChange := @SearchChange;
+  FSearchEdit.OnKeyDown := @SearchKeyDown;
+  FSearch := TSearchController.Create;
+  FHome := ExcludeTrailingPathDelimiter(UserHomePath);
+  FSearchTimer := TTimer.Create(Self);
+  FSearchTimer.Enabled := False;
+  FSearchTimer.Interval := 50;
+  FSearchTimer.OnTimer := @SearchTick;
+
+  { The trail fills the space up to the search field and follows resizes. }
+  FCrumbBar.AnchorSideRight.Control := FSearchEdit;
   FCrumbBar.AnchorSideRight.Side := asrLeft;
   FCrumbBar.BorderSpacing.Right := 12;
   FCrumbBar.Anchors := [akLeft, akTop, akRight];
@@ -623,6 +664,13 @@ begin
   FList.OnMouseDown := @ListMouseDown;
   FList.OnKeyDown := @ListKeyDown;
   FList.OnDblClick := @ListDblClick;
+
+  { SearchResultsView empty states, over the list only. }
+  FSearchEmpty := TEmptyStateView.Create(Self);
+  FSearchEmpty.Parent := FListPanel;
+  FSearchEmpty.Align := alClient;
+  FSearchEmpty.Color := CPanel;
+  FSearchEmpty.Visible := False;
   FListHover := -1;
 
   FChartPanel := TPanel.Create(Self);
@@ -697,6 +745,108 @@ begin
   FFolderBtn.Top := FVolList.Top + FVolList.Height + 12;
   FRefreshVolBtn.Top := FFolderBtn.Top;
   FPickerState.BoundsRect := FVolList.BoundsRect;
+end;
+
+procedure TMainForm.SearchChange(Sender: TObject);
+begin
+  FSearchQuery := Trim(FSearchEdit.Text);
+  FSearch.SetQuery(FSearchQuery);
+  if (FSearchQuery <> '') and not FSearch.HasIndex and (FTree <> nil) then
+    FSearch.SetTree(FTree, FScanThread <> nil);
+  if FSearchQuery = '' then
+  begin
+    FSearchItems := nil;
+    FSearchTotal := 0;
+    FSearchRunning := False;
+  end
+  else
+    FSearchRunning := True;
+  FSearchTimer.Enabled := FSearchQuery <> '';
+  { onChange(of: searchText): the selection is cleared. }
+  FList.ClearSelection;
+  FSelectionAnchor := -1;
+  RefreshList;
+  FListHeader.Invalidate;
+end;
+
+procedure TMainForm.SearchKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if Key = VK_ESCAPE then
+  begin
+    ClearSearch;
+    Key := 0;
+  end
+  else if (Key = VK_RETURN) and (FList.Items.Count > 0) then
+  begin
+    FList.SetFocus;
+    if FList.ItemIndex < 0 then
+      FList.ItemIndex := 0;
+    Key := 0;
+  end;
+end;
+
+procedure TMainForm.SearchTick(Sender: TObject);
+var
+  Snap: TSearchSnapshot;
+begin
+  if FSearch.TakeResults(Snap) and (Snap.Query = FSearchQuery) then
+  begin
+    FSearchItems := Snap.Items;
+    FSearchTotal := Snap.TotalMatches;
+    FSearchPartial := Snap.Partial;
+    RefreshList;
+  end;
+  FSearchRunning := FSearch.IsRunning;
+  FListHeader.Invalidate;
+  UpdateSearchEmpty;
+  if not FSearchRunning then
+    FSearchTimer.Enabled := False;
+end;
+
+procedure TMainForm.ClearSearch;
+begin
+  if FSearchEdit.Text <> '' then
+    FSearchEdit.Text := ''
+  else
+    SearchChange(nil);
+end;
+
+{ DiskAnalysisView.openSearchResult: a folder opens itself, a file its
+  parent; the search ends. }
+procedure TMainForm.OpenSearchResult(Index: Integer);
+var
+  Destination: string;
+begin
+  if (Index < 0) or (Index > High(FSearchItems)) or (FTree = nil) then
+    Exit;
+  if FSearchItems[Index].IsDirectory then
+    Destination := FSearchItems[Index].Path
+  else
+    Destination := ExtractFileDir(FSearchItems[Index].Path);
+  ClearSearch;
+  if FTree.NodeIDForPath(Destination, FRootPath) = NoNode then
+    Exit;
+  FBreadcrumbs.Add(FCurrentPath);
+  ShowNode(Destination);
+end;
+
+{ SearchResultsView: 'Searching…' while running with nothing yet,
+  ContentUnavailableView.search when nothing matched. }
+procedure TMainForm.UpdateSearchEmpty;
+begin
+  if (FSearchQuery = '') or (FList.Items.Count > 0) then
+  begin
+    FSearchEmpty.Visible := False;
+    Exit;
+  end;
+  if FSearchRunning then
+    FSearchEmpty.SetState('magnifyingglass', 'Searching…', '', [], [])
+  else
+    FSearchEmpty.SetState('magnifyingglass',
+      'No Results for “' + FSearchQuery + '”',
+      'Check the spelling or try a new search.', [], []);
+  FSearchEmpty.Visible := True;
+  FSearchEmpty.BringToFront;
 end;
 
 { The app menu (the first item titled with the Apple logo becomes it on
@@ -981,6 +1131,7 @@ procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   StopWatchingAppearance;
   CancelScan;
+  FSearch.Free;
   FTree.Free;
   FCollector.Free;
   FBreadcrumbs.Free;
@@ -997,6 +1148,12 @@ begin
   else if (Key = VK_OEM_4) and (ssMeta in Shift) and (FMode in [umAnalysis, umScanning]) then
   begin
     DisksClick(nil);
+    Key := 0;
+  end
+  else if (Key = VK_F) and (ssMeta in Shift) and (FMode in [umAnalysis, umScanning]) then
+  begin
+    FSearchEdit.SetFocus;
+    FSearchEdit.SelectAll;
     Key := 0;
   end
   else if (Key = VK_R) and (ssMeta in Shift) and (FMode = umAnalysis) then
@@ -1058,7 +1215,10 @@ begin
   { Swift keeps the collector for the analysed root (failed deletions
     stay staged across the rescan); a different root starts afresh. }
   if RootChanged then
+  begin
     FCollector.Clear;
+    ClearSearch;
+  end;
   RefreshCollector;
   FMode := umScanning;
   ShowAnalysis;
@@ -1126,6 +1286,10 @@ begin
     FreeAndNil(FTree);
     FTree := Thread.Tree;
     Thread.FTree := nil;
+    { DiskAnalyzer: the search index is rebuilt from every final result. }
+    FSearch.SetTree(FTree, False);
+    if FSearchQuery <> '' then
+      FSearchTimer.Enabled := True;
     FMode := umAnalysis;
     { DiskAnalysisView: capacity refreshed when a scan ends. }
     RefreshVolumeCapacity;
@@ -1138,6 +1302,9 @@ begin
     else if FTree.NodeCount <= 1 then
       ShowAnalysisState('folder', 'Nothing to Show',
         'This folder is empty, or nothing in it was large enough to scan.', [], []);
+    { Automation: OPENDISK_GUI_SEARCH=<query> types into the search field. }
+    if GetEnvironmentVariable('OPENDISK_GUI_SEARCH') <> '' then
+      FSearchEdit.Text := GetEnvironmentVariable('OPENDISK_GUI_SEARCH');
     { Automation: OPENDISK_GUI_SHOW=<folder inside the scan> opens it. }
     ShowPath := GetEnvironmentVariable('OPENDISK_GUI_SHOW');
     if ShowPath <> '' then
@@ -1170,6 +1337,9 @@ begin
     Exit;
   FreeAndNil(FTree);
   FTree := Partial;
+  { A query during a scan searches the partial tree until the final one. }
+  if (FSearchQuery <> '') and not FSearch.HasIndex then
+    FSearch.SetTree(FTree, True);
   if (FCurrentPath <> HiddenSpaceSentinelPath) and
     (ResolveNode(FTree, FRootPath, FCurrentPath) = NoNode) then
     FCurrentPath := FRootPath;
@@ -1257,12 +1427,33 @@ begin
   Result := Width - HeaderSizeRight - Canvas.TextWidth('Size') - 3 - HeaderChevron;
 end;
 
+{ Int.formatted(): thousands grouped with the locale separator. }
+function GroupedCount(N: Integer): string;
+var
+  Dec_, Group: string;
+  Digits: string;
+  I, K: Integer;
+begin
+  NumberSeparators(Dec_, Group);
+  Digits := IntToStr(N);
+  Result := '';
+  K := 0;
+  for I := Length(Digits) downto 1 do
+  begin
+    if (K > 0) and (K mod 3 = 0) then
+      Result := Group + Result;
+    Result := Digits[I] + Result;
+    Inc(K);
+  end;
+end;
+
 procedure TMainForm.ListHeaderPaint(Sender: TObject);
 var
   C: TCanvas;
   Bg, Ink: TColor;
   Glyph: TBitmap;
   X, Y: Integer;
+  Summary: string;
 
   procedure DrawColumn(const Text: string; AtX: Integer; Active: Boolean);
   begin
@@ -1297,6 +1488,29 @@ begin
   C.Font.Style := [fsBold];
   C.Font.Color := Ink;
   Y := (FListHeader.Height - 1 - C.TextHeight('Ag')) div 2;
+  if FSearchQuery <> '' then
+  begin
+    { SearchResultsView header: summary, partial note, spinner. }
+    C.Font.Style := [];
+    if Length(FSearchItems) = 0 then
+      Exit;
+    if FSearchTotal > Length(FSearchItems) then
+      Summary := Format('Largest %d of %s matches', [Length(FSearchItems),
+        GroupedCount(FSearchTotal)])
+    else if FSearchTotal = 1 then
+      Summary := '1 match · largest first'
+    else
+      Summary := GroupedCount(FSearchTotal) + ' matches · largest first';
+    C.TextOut(12, Y, Summary);
+    if FSearchPartial then
+    begin
+      C.Font.Color := RGBToColor((Red(Ink) + Red(Bg)) div 2,
+        (Green(Ink) + Green(Bg)) div 2, (Blue(Ink) + Blue(Bg)) div 2);
+      C.TextOut(12 + C.TextWidth(Summary) + 6, Y,
+        '· scan in progress, results may be incomplete');
+    end;
+    Exit;
+  end;
   DrawColumn('Name', HeaderNameX, FSortField = lsName);
   DrawColumn('Size', SizeHeaderLeft(C, FListHeader.Width), FSortField = lsSize);
 end;
@@ -1306,7 +1520,7 @@ procedure TMainForm.ListHeaderMouseUp(Sender: TObject; Button: TMouseButton;
 var
   SizeLeft: Integer;
 begin
-  if Button <> mbLeft then
+  if (Button <> mbLeft) or (FSearchQuery <> '') then
     Exit;
   FListHeader.Canvas.Font.Size := 10;
   FListHeader.Canvas.Font.Style := [fsBold];
@@ -1387,6 +1601,18 @@ begin
     FPurgeableTotal := 0;
     FPurgeableCount := 0;
     FPurgeableEntries := nil;
+    if FSearchQuery <> '' then
+    begin
+      { DiskAnalysisView visibleItems in search mode: results minus the
+        collected ones, then the user's sort. }
+      for I := 0 to High(FSearchItems) do
+        if not FCollector.Contains(FSearchItems[I].Path) then
+          AddRow(SearchRowBase - I, FSearchItems[I].Name, FSearchItems[I].Size);
+      SortListRows;
+      UpdateSearchEmpty;
+      Exit;
+    end;
+    UpdateSearchEmpty;
     if FTree = nil then
       Exit;
     if FCurrentPath = HiddenSpaceSentinelPath then
@@ -1448,6 +1674,16 @@ begin
   end;
 end;
 
+function TMainForm.RowSizeOf(ID: TNodeID): Int64;
+begin
+  if ID = PurgeableRowID then
+    Result := FPurgeableTotal
+  else if ID <= SearchRowBase then
+    Result := FSearchItems[SearchRowBase - ID].Size
+  else
+    Result := FTree.SizeOf(ID);
+end;
+
 procedure TMainForm.SortListRows;
 var
   I, J: Integer;
@@ -1462,8 +1698,8 @@ begin
     begin
       A := TNodeID(PtrInt(FList.Items.Objects[I]));
       B := TNodeID(PtrInt(FList.Items.Objects[J]));
-      if A = PurgeableRowID then SizeA := FPurgeableTotal else SizeA := FTree.SizeOf(A);
-      if B = PurgeableRowID then SizeB := FPurgeableTotal else SizeB := FTree.SizeOf(B);
+      SizeA := RowSizeOf(A);
+      SizeB := RowSizeOf(B);
       NameA := FList.Items[I];
       NameB := FList.Items[J];
       if FSortField = lsName then
@@ -1621,7 +1857,7 @@ var
   Keep: Integer;
   NameTop, Right, SizeLeft, CapLeft, MidY, W, TextLeft, Count: Integer;
   RowSize: Int64;
-  FullName: string;
+  FullName, Location: string;
   IconRect: TRect;
   Frac: Double;
 begin
@@ -1630,7 +1866,23 @@ begin
   if (FTree = nil) or (Index < 0) or (Index >= LB.Items.Count) then
     Exit;
   Node := TNodeID(PtrUInt(LB.Items.Objects[Index]));
-  if Node = PurgeableRowID then
+  Location := '';
+  if Node <= SearchRowBase then
+  begin
+    { SearchResultsView row: FolderRowView with the parent folder as its
+      location line. }
+    with FSearchItems[SearchRowBase - Node] do
+    begin
+      IsDir := IsDirectory;
+      RowSize := Size;
+      FullName := Name;
+      Count := 0;
+      Location := ExtractFileDir(Path);
+      if (FHome <> '') and (Copy(Location, 1, Length(FHome)) = FHome) then
+        Location := '~' + Copy(Location, Length(FHome) + 1, MaxInt);
+    end;
+  end
+  else if Node = PurgeableRowID then
   begin
     { DiskAnalyzer.display(node:): the cache summary row. }
     IsDir := True;
@@ -1755,6 +2007,8 @@ begin
   { FolderRowView: a synthetic folder gets the generic folder icon. }
   if Node = PurgeableRowID then
     DrawFolderIcon(C, IconRect)
+  else if Node <= SearchRowBase then
+    DrawFileIcon(C, IconRect, FSearchItems[SearchRowBase - Node].Path, IsDir)
   else
     DrawFileIcon(C, IconRect, FTree.PathOf(Node), IsDir);
   TextLeft := Row.Left + PadX + IconSize + IconGap;
@@ -1780,6 +2034,18 @@ begin
   Detail := '';
   if IsDir and (Count > 0) then
     Detail := Format('%d items', [Count]);
+  if Location <> '' then
+  begin
+    { .truncationMode(.middle) }
+    C.Font.Size := 10;
+    Keep := CodePointCount(Location);
+    Detail := Location;
+    while (C.TextWidth(Detail) > Right - TextLeft) and (Keep > 6) do
+    begin
+      Dec(Keep);
+      Detail := TruncateMiddle(Location, Keep);
+    end;
+  end;
   { Fixed metrics: a 13 pt name line, 2 pt spacing, an 11 pt caption
     (FolderRowView VStack spacing 2); canvas TextHeight is not reliable
     before the font is realized. }
@@ -1848,9 +2114,16 @@ var
   Child: TNodeID;
   ChildPath: string;
 begin
-  if (FTree = nil) or (FList.ItemIndex < 0) then
+  if FList.ItemIndex < 0 then
     Exit;
   Child := TNodeID(PtrUInt(FList.Items.Objects[FList.ItemIndex]));
+  if Child <= SearchRowBase then
+  begin
+    OpenSearchResult(SearchRowBase - Child);
+    Exit;
+  end;
+  if FTree = nil then
+    Exit;
   if Child = PurgeableRowID then
   begin
     FBreadcrumbs.Add(FCurrentPath);
