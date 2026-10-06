@@ -8,7 +8,7 @@ interface
 
 uses
   Classes, SysUtils, Math, Graphics, Controls, ChartItem, Formatters, RingsLayout,
-  GuiColors, PlatformChartCanvas, ChartHoverTip, DesignTokens;
+  GuiColors, PlatformChartCanvas, ChartHoverTip, DesignTokens, PlatformChartAccessibility;
 
 type
   TRingSelectEvent = procedure(Sender: TObject; const Path: string;
@@ -31,6 +31,8 @@ type
     FPressX, FPressY: Integer;
     FPressed, FDragging: Boolean;
     FLayout: TRingsLayout;
+    { Folder paths of the accessible elements ('' for files). }
+    FAccessiblePaths: array of string;
     FStaticLayer: TChartCanvasCache;
     procedure SetRoot(AValue: TChartItem);
     procedure RebuildLayout;
@@ -40,6 +42,8 @@ type
     function ColorFor(ColorPosition: Double; Depth: Integer;
       Highlighted: Boolean): TColor;
     procedure ApplyEnvironmentHover;
+    procedure UpdateAccessibility;
+    procedure AccessiblePress(Index: Integer);
   protected
     procedure Paint; override;
     procedure Resize; override;
@@ -129,6 +133,79 @@ begin
   FEnvHoverApplied := False;
   FStaticLayer.Resize(R.Right - R.Left, R.Bottom - R.Top, BackingScaleFor(Self));
   FStaticLayer.Invalidate;
+  UpdateAccessibility;
+end;
+
+{ RingsChartView chartAccessibilityLabel / accessibilitySegmentList: the
+  chart's label, and one element per first-ring segment (name; size and
+  percentage of the root; a button that opens folders). }
+procedure TRingsChart.UpdateAccessibility;
+var
+  Items: array of TChartAccessibleItem;
+  Seg: TRingSegment;
+  I, N, K, Count: Integer;
+  A, X, Y, MinX, MinY, MaxX, MaxY: Double;
+  Dot: TFormatSettings;
+  ChartLabel: string;
+begin
+  if (FRoot = nil) or (FLayout = nil) or not HandleAllocated then
+    Exit;
+  Dot := DefaultFormatSettings;
+  Dot.DecimalSeparator := '.';
+  Count := FRoot.Children.Count;
+  ChartLabel := 'Disk usage chart for ' + FRoot.Name + ', ' + IntToStr(Count) + ' item';
+  if Count <> 1 then
+    ChartLabel := ChartLabel + 's';
+  ChartLabel := ChartLabel + ', total size ' + FormatFileSize(FRoot.Size);
+  SetLength(Items, FLayout.Segments.Count);
+  N := 0;
+  SetLength(FAccessiblePaths, 0);
+  SetLength(FAccessiblePaths, FLayout.Segments.Count);
+  for I := 0 to FLayout.Segments.Count - 1 do
+  begin
+    Seg := TRingSegment(FLayout.Segments[I]);
+    if Seg.Depth <> 1 then
+      Continue;
+    Items[N].ItemLabel := Seg.Name;
+    Items[N].Value := FormatFileSize(Seg.Size) + ', ' +
+      FormatFloat('0.0', Seg.FractionOfRoot * 100, Dot) + ' percent';
+    Items[N].IsButton := Seg.Kind = ckDirectory;
+    { The annular sector's bounds, from points along both arcs. }
+    MinX := MaxDouble;
+    MinY := MaxDouble;
+    MaxX := -MaxDouble;
+    MaxY := -MaxDouble;
+    for K := 0 to 16 do
+    begin
+      A := Seg.StartAngle + Seg.Sweep * K / 16;
+      X := FLayout.CenterX + Cos(A) * Seg.OuterRadius;
+      Y := FLayout.CenterY + Sin(A) * Seg.OuterRadius;
+      MinX := Min(MinX, X); MaxX := Max(MaxX, X);
+      MinY := Min(MinY, Y); MaxY := Max(MaxY, Y);
+      X := FLayout.CenterX + Cos(A) * Seg.InnerRadius;
+      Y := FLayout.CenterY + Sin(A) * Seg.InnerRadius;
+      MinX := Min(MinX, X); MaxX := Max(MaxX, X);
+      MinY := Min(MinY, Y); MaxY := Max(MaxY, Y);
+    end;
+    Items[N].Bounds := Rect(Floor(MinX), Floor(MinY), Ceil(MaxX), Ceil(MaxY));
+    if Items[N].IsButton then
+      FAccessiblePaths[N] := Seg.Path
+    else
+      FAccessiblePaths[N] := '';
+    Inc(N);
+  end;
+  SetLength(Items, N);
+  SetLength(FAccessiblePaths, N);
+  SetChartAccessibility(Self, ChartLabel, Items, @AccessiblePress);
+end;
+
+{ .accessibilityAction: folders navigate (onSelectDirectory); files do
+  nothing. }
+procedure TRingsChart.AccessiblePress(Index: Integer);
+begin
+  if (Index >= 0) and (Index <= High(FAccessiblePaths)) and
+    (FAccessiblePaths[Index] <> '') and Assigned(FOnSelect) then
+    FOnSelect(Self, FAccessiblePaths[Index], False);
 end;
 
 procedure TRingsChart.ApplyEnvironmentHover;

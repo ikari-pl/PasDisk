@@ -113,7 +113,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Continued-edge arc for hidden children | RingsChartView.swift:194-207 | gui/PlatformChartCanvas.pas (StrokeContinuedEdge) | N/A | Done | od-31j.18.11 | ba740bb: Core Graphics arc. |
 | Click: center → back, directory → navigate | RingsChartView.swift:35-44 | gui/RingsChart.pas:329-343; uMainForm.pas:783-793 | N/A | Done | od-31j.11 | Pascal checks `DirectoryExists` on disk instead of the segment kind. |
 | Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | gui/RingsChart.pas (OnDragSegment, DraggableSegmentAt); gui/uMainForm.pas | N/A | Done | od-31j.18.6 | Segment drag (87e2000) and FileActionsMenu on draggable segments (616c3cf). |
-| Chart accessibility (label + per-segment elements/actions) | RingsChartView.swift:57-94 | — | N/A | Missing | — | |
+| Chart accessibility (label + per-segment elements/actions) | RingsChartView.swift:57-94 | gui/PlatformChartAccessibility.pas; gui/RingsChart.pas (UpdateAccessibility, AccessiblePress) | N/A | Done | — | The chart is an AXGroup labelled "Disk usage chart for <name>, N item(s), total size <size>"; one child per depth-1 segment: name, "<size>, <p.p> percent", AXButton for folders (press navigates), AXStaticText for files, with the segment's bounds as its frame. |
 | Coalesced chart rebuild; "Building chart…" placeholder | DiskAnalyzer.swift:256-281; DiskAnalysisView.swift:430-439 | gui/uMainForm.pas (ShowSkeleton, FChartBusy) | N/A | Done | od-31j.18.4 | "Building chart…" shows in the chart pane while the skeleton lists and no tree exists. The chart itself is built synchronously from each snapshot, so there is no separate coalescing. |
 | SVG/HTML rings export (`opendisk view`) | — | units/RingsSVG.pas; opendisk.lpr:258-292 | N/A | N/A | — | Pascal only. |
 
@@ -231,9 +231,9 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 85 |
+| Done | 41 | 86 |
 | Partial | 3 | 3 |
-| Missing | 1 | 6 |
+| Missing | 1 | 5 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 

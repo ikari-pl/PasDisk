@@ -17,7 +17,7 @@ uses
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
   PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing,
-  PlatformListBatch;
+  PlatformListBatch, PlatformChartAccessibility;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -1587,6 +1587,12 @@ begin
         OnTimer := @QuickLookHookTick;
         Enabled := True;
       end;
+    { Automation: OPENDISK_GUI_A11Y_DUMP=1 prints the chart's accessibility. }
+    if GetEnvironmentVariable('OPENDISK_GUI_A11Y_DUMP') = '1' then
+    begin
+      WriteLn(DescribeAccessibility(FChart));
+      Flush(Output);
+    end;
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
     if GetEnvironmentVariable('OPENDISK_GUI_MENU') <> '' then
       with TTimer.Create(Self) do
