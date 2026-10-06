@@ -26,12 +26,12 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Hard-link dedupe (first sighting counts) + `recordHardLink` | TraversalScanner.swift:138-176 | units/Traversal.pas:140-150 | Done | Done | — | |
 | `normalizeHardLinks` | Services/Scanning/FileTree.swift:110-122 | units/FileTree.pas:587 | Done | Done | od-31j.22 | |
 | FileTree model, size rollup, display sort, `path(of:)`, `nodeID(forPath:)` | FileTree.swift:3-306 | units/FileTree.pas:29-770 | Done | Done | od-31j.1 | |
-| Allowed devices = scan root + Data volume (when the root is on the system volume) | Services/Scanning/ScanEngine.swift:160-162, 256-265 | units/Traversal.pas:73-88; opendisk.lpr:92 (passed); gui/uMainForm.pas:162 (not passed) | Done | Partial | od-31j.39 | The CLI passes `SubtreeAllowedDevices` since od-31j.39; `test_traversal` confirms `/` allows `/System/Volumes/Data`. The GUI scan thread still calls `ScanPath` without it. |
+| Allowed devices = scan root + Data volume (when the root is on the system volume) | Services/Scanning/ScanEngine.swift:160-162, 256-265 | units/Traversal.pas:73-88; opendisk.lpr:92; gui/uMainForm.pas (TScanThread.Execute) | Done | Done | od-31j.39 | Both full-scan paths pass `SubtreeAllowedDevices` (2115090, a081ce3); `test_traversal` checks / includes /System/Volumes/Data. |
 | Data-volume alias (`/x` → `/System/Volumes/Data/x` when `/x` is missing) | ScanEngine.swift:173-177 | — | Missing | Missing | — | |
 | Boot volume group: scan `/` plus each `/System/Volumes/*` sibling, merge them, drop `/Volumes` | ScanEngine.swift:288-359; FileTree.swift:306 (`merge`) | — | Missing | Missing | — | Pascal has no `merge` or `removeChild`. |
 | Parallel traversal workers (3-5 for a subtree, 4-8 for a volume) | TraversalScanner.swift:6-12, 65-116 | units/Traversal.pas:90-186 (one thread, stack) | Missing | Missing | — | Affects performance, not results. |
 | Process I/O tuning (`setiopolicy_np` IMPORTANT, `RLIMIT_NOFILE` 65536) | ScanEngine.swift:41-48 | — | Missing | Missing | — | |
-| Cancellation (`isCancelled` checked by every worker) | ScanEngine.swift:5-10, 107-114; TraversalScanner.swift:127 | — | Missing | Missing | od-31j.24 | The GUI's `FormDestroy` waits for the whole scan to finish (uMainForm.pas:535-546). |
+| Cancellation (`isCancelled` checked by every worker) | ScanEngine.swift:5-10, 107-114; TraversalScanner.swift:127 | units/Traversal.pas (ScanPath IsCancelled); gui/uMainForm.pas CancelScan | Done | Done | od-31j.24 | Polled once per directory like TraversalScanner.swift:130; window close and Unmount stop the walk (2115090). |
 | Progress metrics (bytes, items, phase) emitted every 33 ms | ScanEngine.swift:36, 63-72; ScanMetrics.swift; Models/ScanProgress.swift | units/Traversal.pas:177-178 (callback once per directory); opendisk.lpr:22-33 | Partial | Partial | od-31j.38 | No `checkingChanges` phase. The GUI polls unsynchronized fields every 120 ms (uMainForm.pas:144-154, 611-626). |
 | Unreadable-directory count | ScanMetrics.swift:22; TraversalScanner.swift:131 | units/Traversal.pas:132-133 (silently skipped) | Missing | Missing | — | Swift needs this count to show the "Couldn't Read This Location" state. |
 | Partial-tree snapshots during the scan (500 ms to 15 s backoff) | ScanEngine.swift:12-33, 74-99; Services/DiskAnalyzer.swift:208-217 | — | Missing | Missing | — | |
@@ -122,18 +122,18 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Feature | Swift ref | Pascal ref | Engine/CLI | GUI | Bead | Note |
 |---|---|---|---|---|---|---|
 | Picker first, analysis after choosing (NavigationStack) | Views/Main/ContentView.swift:8-23 | gui/uMainForm.pas:401-418 | N/A | Done | od-31j.8 | |
-| Device row fidelity (volume icon, used/total decimal, capacity bar, chevron, hover) | Views/Components/DeviceRow.swift; DevicePickerView.swift:160-179 | gui/uMainForm.pas:438-499 | N/A | Partial | od-31j.18.1 | Draws custom rows on a hardcoded dark palette, with no icon or hover. |
+| Device row fidelity (volume icon, used/total decimal, capacity bar, chevron, hover) | Views/Components/DeviceRow.swift; DevicePickerView.swift:160-179 | gui/uMainForm.pas VolListDrawItem | N/A | Partial | od-31j.18.1 | Owner-drawn rows with semantic colours, used/total caption and capacity bar (d2ba636); volume icons, hover, chevron and Swift row metrics are in progress under od-31j.18.1. |
 | "Scan Folder…" open panel | DevicePickerView.swift:46-49, 141-157 | gui/uMainForm.pas:521-528 | N/A | Done | od-31j.11 | `SelectDirectory` starts in the home folder. |
 | Empty picker state ("No Disks Found") | DevicePickerView.swift:29-35 | — | N/A | Missing | od-31j.18.12 | |
-| Breadcrumb bar (clickable segments, hover, chevrons) | Views/Components/BreadcrumbBar.swift | gui/uMainForm.pas:296-302, 685-692 (plain label) | N/A | Partial | od-31j.18.2 | Not clickable. |
-| Toolbar: Unmount (Cmd-[, confirmation dialog), Refresh (Cmd-R) | DiskAnalysisView.swift:97-122, 189-195 | gui/uMainForm.pas:278-311, 548-566 | N/A | Partial | od-31j.18.2 | "Disks" uses Cmd-Left with no confirmation. Refresh rescans the **root**; Swift rescans the **current folder** (DiskAnalysisView.swift:478-482). |
+| Breadcrumb bar (clickable segments, hover, chevrons) | Views/Components/BreadcrumbBar.swift | gui/BreadcrumbBar.pas; gui/uMainForm.pas CrumbNavigate | N/A | Done | od-31j.18.2 | 93ceb04. Deviation: an over-long trail collapses its middle and middle-truncates names instead of scrolling horizontally. |
+| Toolbar: Unmount (Cmd-[, confirmation dialog), Refresh (Cmd-R) | DiskAnalysisView.swift:97-122, 189-195 | gui/uMainForm.pas DisksClick/RefreshClick/FormKeyDown | N/A | Partial | od-31j.18.19 | Behaviour done (717ffaf): Unmount + confirmation, Cmd-[, Refresh rescans the current folder, Cmd-R, window title. Native NSToolbar + size subtitle missing. |
 | Window title/subtitle (folder name / displayed size) | DiskAnalysisView.swift:94-95, 496-506 | gui/uMainForm.pas:601 | N/A | Partial | od-31j.18.2 | No subtitle. The title does not follow navigation. |
 | Back via the rings center / breadcrumb stack | DiskAnalysisView.swift:544-574 | gui/uMainForm.pas:772-773, 809-818 | N/A | Done | od-31j.11 | |
 | Navigating to an unscanned path triggers a scan of it | DiskAnalysisView.swift:569-574 | — | N/A | Missing | — | |
 | List/chart split 60/40, resizable, minimum widths | DiskAnalysisView.swift:51-67 | gui/uMainForm.pas:343-348 (fixed 440 px, no splitter) | N/A | Partial | od-31j.18.4 | |
-| Folder rows: file icon, name weight, "N items", size bar, size, chevron, hover/selection | Views/Components/FolderRowView.swift:47-121; Views/Analysis/ScanResultsView.swift | gui/uMainForm.pas:361-369, 698-736 (Menlo `TListBox`) | N/A | Partial | od-31j.18.3 | CLAUDE.md forbids a monospaced font for the main list. |
+| Folder rows: file icon, name weight, "N items", size bar, size, chevron, hover/selection | Views/Components/FolderRowView.swift:47-121; Views/Analysis/ScanResultsView.swift | gui/uMainForm.pas ListDrawItem | N/A | Partial | od-31j.18.17 | a1801e3, b481ed9: name weight, item count, size capsule, size column, chevron, hover/selection, middle truncation. Native file icons missing. |
 | Sortable Name/Size column header | DiskAnalysisView.swift:216-228, 340-375 | — | N/A | Missing | od-31j.18.3 | |
-| Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | — | N/A | Missing | od-31j.18.3 | |
+| Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | — | N/A | Missing | od-31j.18.16 | |
 | Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | — | N/A | Missing | — | |
 | Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | — | N/A | Missing | — | |
 | Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | — | N/A | Missing | — | |
@@ -143,11 +143,11 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Empty / FDA-required / unreadable states | DiskAnalysisView.swift:508-542 | gui/uMainForm.pas:573-576, 639-644 (`MessageDlg`, status text) | N/A | Missing | od-31j.18.12 | |
 | Scan status bar: phase text, progress bar vs. used space, files/sec, "Scanned in", total · items | Views/Components/ScanStatusBar.swift:15-77; DiskAnalysisView.swift:484-487 | gui/uMainForm.pas:618-620, 650-655 (`TStatusBar` simple text) | N/A | Partial | od-31j.18.7 | |
 | Status bar capacity readout (bar + "X available of Y", purgeable tooltip, a11y) | ScanStatusBar.swift:60-112; DiskAnalysisView.swift:134-137, 489-494 | gui/uMainForm.pas:650-653 (text "volume used / total") | N/A | Partial | od-31j.18.7 | |
-| Semantic system colors (light/dark) | Swift uses system materials throughout | gui/uMainForm.pas:114-124; RingsChart.pas:52 | N/A | Missing | od-31j.18.10 | |
+| Semantic system colors (light/dark) | Swift uses system materials throughout | gui/uMainForm.pas, RingsChart.pas, GuiColors.pas, PlatformAppearance.pas | N/A | Done | od-31j.18.10 | d2ba636. Dark mode judged from source (host in Light). |
 | Typography/spacing tokens | — | gui/uMainForm.pas (ad-hoc sizes) | N/A | Missing | od-31j.18.8 | |
 | Restrained motion (hover fades, collector drawer, chart transition) | CollectorBar.swift:89-95; ScanResultsView.swift:29 | — | N/A | Missing | od-31j.18.15 | |
 | Thread-safe scan state handoff | DiskAnalyzer.swift:99-103 (MainActor hop) | gui/uMainForm.pas:126-170, 611-626 | N/A | Missing | od-31j.38 | |
-| Byte formatting (`ByteCountFormatter` `.file` = decimal; GB/TB no fraction on devices) | Utilities/Formatters.swift:4-31 | units/Formatters.pas:16-35 (1024-based, fixed decimals) | Partial | Partial | — | Pascal sizes are about 2.4% (GB) to 10% (TB) smaller than Swift's for the same byte count. |
+| Byte formatting (`ByteCountFormatter` `.file` = decimal; GB/TB no fraction on devices) | Utilities/Formatters.swift:4-31 | units/Formatters.pas; units/PlatformLocale.pas | Done | Done | od-31j.40 | b2e9e18: matches 360 values from the real ByteCountFormatter (en_US, en_PL), locale separators. |
 
 ## 8. Platform / portability
 
@@ -188,7 +188,7 @@ Related GUI correctness beads outside od-31j.18: od-31j.12 (cache in the GUI), o
 ## Gaps without a bead
 
 Engine/CLI:
-1. ~~Scans don't pass `SubtreeAllowedDevices`~~ — now bead od-31j.39 (CLI fixed, GUI pending; §1).
+1. ~~Scans don't pass `SubtreeAllowedDevices`~~ — fixed in CLI and GUI (od-31j.39).
 2. Data-volume path alias (§1).
 3. Boot volume group composition: `/System/Volumes/*` siblings, `merge`, drop `/Volumes` (§1).
 4. Parallel traversal workers (§1).
@@ -196,7 +196,7 @@ Engine/CLI:
 6. Unreadable-directory counting (§1). The "Couldn't Read" state in od-31j.18.12 depends on it.
 7. Partial-tree snapshots during the scan (§1).
 8. Search: reachability filter, Unicode/NFC folding, name tiebreak, total-match count (§4).
-9. Byte formatting: decimal `ByteCountFormatter` semantics (§7).
+9. ~~Byte formatting: decimal `ByteCountFormatter` semantics (§7).~~ — fixed (od-31j.40).
 10. Volume list sorted by path (§3).
 
 GUI:
@@ -210,7 +210,7 @@ GUI:
 18. Display limits: top 100 below the root, hide < 1 KiB (§7).
 19. Skeleton listing before results (§7).
 20. Navigating to an unscanned path triggers a scan (§7).
-21. Refresh rescans the current folder, not the root (§7). This could go under od-31j.18.2.
+21. ~~Refresh rescans the current folder, not the root (§7).~~ — fixed (od-31j.18.2).
 22. Chart accessibility (§6).
 
 Distribution:
@@ -219,10 +219,10 @@ Distribution:
 
 ## Unverified items
 
-- ~~**`/` scan misses the Data volume**~~ — resolved by od-31j.39: confirmed from source and by `tests/test_traversal.pas` `TestAllowedDevices` (CLI); the GUI call site is still pending.
+- ~~**`/` scan misses the Data volume**~~ — resolved by od-31j.39: confirmed from source and by `tests/test_traversal.pas` `TestAllowedDevices` (CLI) and the GUI scan thread (2115090).
 - **Hidden-volume filter equivalence:** whether `kCFURLEnumeratorSkipInvisibles` matches Swift's `.skipHiddenVolumes` was not tested.
 - **Windows and Linux builds (od-31j.13, od-31j.14):** no build was run.
-- **GUI visuals:** light/dark rendering and arc faceting come from the code and the od-31j.18.x bead notes; no window was opened.
+- **GUI visuals:** light appearance, folder rows, breadcrumbs and the rings chart are checked in window captures (OPENDISK_GUI_SCAN); dark appearance is judged from source only (the host is in Light and no per-process override forces Dark).
 
 ## Summary counts
 
@@ -230,9 +230,9 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 25 | 16 |
-| Partial | 9 | 26 |
-| Missing | 11 | 53 |
+| Done | 27 | 21 |
+| Partial | 8 | 23 |
+| Missing | 10 | 51 |
 | N/A | 58 | 8 |
 | Unverified | 2 | 2 |
 
