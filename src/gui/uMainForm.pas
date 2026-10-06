@@ -15,7 +15,8 @@ uses
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
-  CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout;
+  CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
+  PlatformQuickLook;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -196,6 +197,9 @@ type
     procedure PopUpFileMenu(const Item: TFolderItem; SelectedCount: Integer;
       const ScreenPt: TPoint);
     procedure ChartMenuHookTick(Sender: TObject);
+    procedure QuickLookRow(Row: Integer);
+    procedure MenuQuickLookClick(Sender: TObject);
+    procedure QuickLookHookTick(Sender: TObject);
     procedure MenuAddClick(Sender: TObject);
     procedure MenuAddSelectedClick(Sender: TObject);
     procedure MenuShowInFinderClick(Sender: TObject);
@@ -1151,7 +1155,22 @@ begin
   if (Key = VK_Z) and (ssMeta in Shift) and (FMode = umAnalysis) then
   begin
     if FCollector.Undo then
+    begin
       RefreshCollector;
+      { Unstaged items show in the folder list again. }
+      RefreshList;
+    end;
+    Key := 0;
+  end
+  { handleQuickLookKey: Space without Cmd/Option/Control toggles Quick
+    Look, except while typing in the search field. }
+  else if (Key = VK_SPACE) and (Shift * [ssMeta, ssAlt, ssCtrl] = []) and
+    (FMode = umAnalysis) and not FSearchEdit.Focused then
+  begin
+    if QuickLookVisible then
+      CloseQuickLook
+    else
+      QuickLookRow(-1);
     Key := 0;
   end
   else if (Key = VK_OEM_4) and (ssMeta in Shift) and (FMode in [umAnalysis, umScanning]) then
@@ -1371,6 +1390,14 @@ begin
       begin
         Interval := 800;
         OnTimer := @ChartMenuHookTick;
+        Enabled := True;
+      end;
+    { Automation: OPENDISK_GUI_QUICKLOOK=<row> opens Quick Look on that row. }
+    if GetEnvironmentVariable('OPENDISK_GUI_QUICKLOOK') <> '' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 800;
+        OnTimer := @QuickLookHookTick;
         Enabled := True;
       end;
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
@@ -2291,6 +2318,15 @@ begin
   M := TMenuItem.Create(FRowMenu);
   M.Caption := '-';
   FRowMenu.Items.Add(M);
+  { FolderRowView: Quick Look when the row has onQuickLook (folder rows,
+    not FileActionsMenu on the chart). }
+  if FMenuRow >= 0 then
+  begin
+    M := TMenuItem.Create(FRowMenu);
+    M.Caption := 'Quick Look';
+    M.OnClick := @MenuQuickLookClick;
+    FRowMenu.Items.Add(M);
+  end;
   M := TMenuItem.Create(FRowMenu);
   M.Caption := 'Show in Finder';
   M.OnClick := @MenuShowInFinderClick;
@@ -2300,6 +2336,54 @@ begin
   M.OnClick := @MenuCopyPathClick;
   FRowMenu.Items.Add(M);
   FRowMenu.PopUp(ScreenPt.X, ScreenPt.Y);
+end;
+
+{ quickLook(item) / quickLookTarget: the panel shows Row (or, for -1, the
+  first selected real row) among every visible real row, so the arrow
+  keys move through the list. }
+procedure TMainForm.QuickLookRow(Row: Integer);
+var
+  Paths: array of string;
+  Item: TFolderItem;
+  I, Start: Integer;
+begin
+  if Row < 0 then
+    for I := 0 to FList.Items.Count - 1 do
+      if FList.Selected[I] and RowItem(I, Item) and (Copy(Item.Path, 1, 2) <> '::') then
+      begin
+        Row := I;
+        Break;
+      end;
+  if (Row < 0) or not RowItem(Row, Item) or (Copy(Item.Path, 1, 2) = '::') then
+    Exit;
+  { quickLook selects the row it previews. }
+  if not FList.Selected[Row] then
+  begin
+    FList.ClearSelection;
+    FList.Selected[Row] := True;
+  end;
+  Paths := nil;
+  Start := 0;
+  for I := 0 to FList.Items.Count - 1 do
+    if RowItem(I, Item) and (Copy(Item.Path, 1, 2) <> '::') then
+    begin
+      if I = Row then
+        Start := Length(Paths);
+      SetLength(Paths, Length(Paths) + 1);
+      Paths[High(Paths)] := Item.Path;
+    end;
+  ShowQuickLook(Self, Paths, Start);
+end;
+
+procedure TMainForm.QuickLookHookTick(Sender: TObject);
+begin
+  (Sender as TTimer).Enabled := False;
+  QuickLookRow(StrToIntDef(GetEnvironmentVariable('OPENDISK_GUI_QUICKLOOK'), -1));
+end;
+
+procedure TMainForm.MenuQuickLookClick(Sender: TObject);
+begin
+  QuickLookRow(FMenuRow);
 end;
 
 procedure TMainForm.ChartMenuHookTick(Sender: TObject);
