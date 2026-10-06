@@ -8,7 +8,7 @@ interface
 
 uses
   Classes, SysUtils, Math, Graphics, Controls, ChartItem, Formatters, RingsLayout,
-  GuiColors, PlatformChartCanvas;
+  GuiColors, PlatformChartCanvas, ChartHoverTip;
 
 type
   TRingSelectEvent = procedure(Sender: TObject; const Path: string;
@@ -19,6 +19,9 @@ type
     FRoot: TChartItem;
     FOwnsRoot: Boolean;
     FHoverPath: string;
+    FHoverX, FHoverY: Integer;
+    FHoverActive: Boolean;
+    FEnvHoverApplied: Boolean;
     FOnSelect: TRingSelectEvent;
     FLayout: TRingsLayout;
     FStaticLayer: TChartCanvasCache;
@@ -29,6 +32,7 @@ type
     procedure DrawSegmentLabels(ACanvas: TCanvas; Seg: TRingSegment);
     function ColorFor(ColorPosition: Double; Depth: Integer;
       Highlighted: Boolean): TColor;
+    procedure ApplyEnvironmentHover;
   protected
     procedure Paint; override;
     procedure Resize; override;
@@ -53,6 +57,10 @@ begin
   ControlStyle := ControlStyle + [csOpaque];
   FOwnsRoot := False;
   FLayout := nil;
+  FHoverX := 0;
+  FHoverY := 0;
+  FHoverActive := False;
+  FEnvHoverApplied := False;
   FStaticLayer := TChartCanvasCache.Create;
   DoubleBuffered := True;
   Color := clWindow;
@@ -73,6 +81,7 @@ begin
     FreeAndNil(FRoot);
   FOwnsRoot := False;
   FRoot := AValue;
+  FEnvHoverApplied := False;
   RebuildLayout;
   FStaticLayer.Invalidate;
   Invalidate;
@@ -83,6 +92,7 @@ begin
   if FOwnsRoot then
     FreeAndNil(FRoot);
   FRoot := ARoot;
+  FEnvHoverApplied := False;
   FOwnsRoot := True;
   RebuildLayout;
   FStaticLayer.Invalidate;
@@ -100,8 +110,32 @@ begin
   if (R.Right - R.Left < 2) or (R.Bottom - R.Top < 2) then
     Exit;
   FLayout := TRingsLayout.Create(FRoot, R.Right - R.Left, R.Bottom - R.Top);
+  FEnvHoverApplied := False;
   FStaticLayer.Resize(R.Right - R.Left, R.Bottom - R.Top, BackingScaleFor(Self));
   FStaticLayer.Invalidate;
+end;
+
+procedure TRingsChart.ApplyEnvironmentHover;
+var
+  Value, XText, YText: string;
+  Comma, X, Y: Integer;
+  Hit: TRingSegment;
+begin
+  if FEnvHoverApplied or (FLayout = nil) then Exit;
+  FEnvHoverApplied := True;
+  Value := GetEnvironmentVariable('OPENDISK_GUI_HOVER');
+  Comma := Pos(',', Value);
+  if Comma <= 1 then Exit;
+  XText := Trim(Copy(Value, 1, Comma - 1));
+  YText := Trim(Copy(Value, Comma + 1, MaxInt));
+  if (not TryStrToInt(XText, X)) or (not TryStrToInt(YText, Y)) then Exit;
+  if (X < 0) or (Y < 0) or (X >= ClientWidth) or (Y >= ClientHeight) then Exit;
+  Hit := FLayout.SegmentAt(X, Y);
+  if Hit = nil then Exit;
+  FHoverX := X;
+  FHoverY := Y;
+  FHoverPath := Hit.Path;
+  FHoverActive := True;
 end;
 
 procedure TRingsChart.AppearanceChanged;
@@ -324,6 +358,7 @@ begin
     RebuildLayout;
   if FLayout = nil then
     Exit;
+  ApplyEnvironmentHover;
   if not FStaticLayer.Valid then
   begin
     FStaticLayer.BeginStatic;
@@ -368,6 +403,17 @@ begin
     Seg := TRingSegment(FLayout.Segments[I]);
     DrawSegmentLabels(Canvas, Seg);
   end;
+  if FHoverActive and (FHoverPath <> '') then
+    for I := 0 to FLayout.Segments.Count - 1 do
+    begin
+      Seg := TRingSegment(FLayout.Segments[I]);
+      if Seg.Path = FHoverPath then
+      begin
+        DrawChartHoverTip(Canvas, Seg.Name, Seg.Size, Seg.FractionOfRoot,
+          FHoverX, FHoverY, ClientWidth, ClientHeight);
+        Break;
+      end;
+    end;
 end;
 
 procedure TRingsChart.MouseMove(Shift: TShiftState; X, Y: Integer);
@@ -383,9 +429,13 @@ begin
     if Hit <> nil then
       NewPath := Hit.Path;
   end;
-  if NewPath <> FHoverPath then
+  if (NewPath <> FHoverPath) or (X <> FHoverX) or (Y <> FHoverY) then
   begin
     FHoverPath := NewPath;
+    FHoverX := X;
+    FHoverY := Y;
+    FHoverActive := NewPath <> '';
+    { Invalidate coalesces successive mouse events into the next GUI paint. }
     Invalidate;
   end;
 end;
@@ -396,6 +446,7 @@ begin
   if FHoverPath <> '' then
   begin
     FHoverPath := '';
+    FHoverActive := False;
     Invalidate;
   end;
 end;
