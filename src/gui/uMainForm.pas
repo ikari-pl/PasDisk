@@ -26,10 +26,18 @@ type
     FItems: Integer;
   FError: string;
     FUnreadable: Integer;
+    { Newest partial snapshot not yet taken by the UI (od-31j.45). }
+    FPartialLock: TRTLCriticalSection;
+    FPartial: TFileTree;
   protected
     procedure Execute; override;
   public
     constructor Create(const APath: string);
+    destructor Destroy; override;
+    { Called on the scan thread: keeps only the newest snapshot. }
+    procedure OfferPartial(Tree: TFileTree);
+    { Called on the UI thread: the newest snapshot (caller owns), or nil. }
+    function TakePartial: TFileTree;
     { Valid only after WaitFor. }
     property Tree: TFileTree read FTree;
     property Error: string read FError;
@@ -76,6 +84,12 @@ type
     FCollectorPanel: TPanel;
     FCollectorLabel: TLabel;
     FDeleteButton: TButton;
+    { CollectorBar deleting / done phases (od-31j.46). }
+    FCollectorDetail: TLabel;
+    FDeleteBar: TProgressBar;
+    FDeleteJob: TDeleteJob;
+    FDeletePoll: TTimer;
+    FDoneTimer: TTimer;
     FStatus: TStatusBar;
     FCollector: TCollector;
     FTree: TFileTree;
@@ -127,6 +141,8 @@ type
     procedure BackClick(Sender: TObject);
     procedure RefreshClick(Sender: TObject);
     procedure DeleteClick(Sender: TObject);
+    procedure DeletePollTick(Sender: TObject);
+    procedure DoneTimerTick(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure FormResize(Sender: TObject);
@@ -137,6 +153,7 @@ type
     procedure ShowAnalysisState(const Symbol, Title, Description: string;
       const Captions: array of string; const Handlers: array of TNotifyEvent);
     procedure HideAnalysisState;
+    procedure ShowPartial(Partial: TFileTree);
     function ScanFraction(Bytes: Int64): Double;
     procedure RefreshVolumeCapacity;
   public
@@ -182,6 +199,42 @@ begin
   FBytes := 0;
   FItems := 0;
   FUnreadable := 0;
+  InitCriticalSection(FPartialLock);
+  FPartial := nil;
+end;
+
+destructor TScanThread.Destroy;
+begin
+  FPartial.Free;
+  DoneCriticalSection(FPartialLock);
+  inherited Destroy;
+end;
+
+procedure TScanThread.OfferPartial(Tree: TFileTree);
+var
+  Old: TFileTree;
+begin
+  EnterCriticalSection(FPartialLock);
+  Old := FPartial;
+  FPartial := Tree;
+  LeaveCriticalSection(FPartialLock);
+  Old.Free;
+end;
+
+function TScanThread.TakePartial: TFileTree;
+begin
+  EnterCriticalSection(FPartialLock);
+  Result := FPartial;
+  FPartial := nil;
+  LeaveCriticalSection(FPartialLock);
+end;
+
+procedure ScanPartialThunk(Tree: TFileTree);
+begin
+  if ActiveScanThread <> nil then
+    ActiveScanThread.OfferPartial(Tree)
+  else
+    Tree.Free;
 end;
 
 procedure TScanThread.SetProgress(ABytes: Int64; AItems: Integer);
@@ -220,7 +273,7 @@ begin
         other paths include the Data volume behind the firmlinks (and its
         alias); a cancelled scan's partial tree is discarded. }
       FTree := ScanForAnalysis(FPath, @ScanProgressThunk,
-        @ScanCancelledThunk, @FUnreadable);
+        @ScanCancelledThunk, @FUnreadable, @ScanPartialThunk);
       if Terminated then
         FreeAndNil(FTree);
     except
@@ -429,6 +482,32 @@ begin
   FDeleteButton.Anchors := [akTop, akRight];
   FDeleteButton.OnClick := @DeleteClick;
   FDeleteButton.Enabled := False;
+
+  FCollectorDetail := TLabel.Create(Self);
+  FCollectorDetail.Parent := FCollectorPanel;
+  FCollectorDetail.Left := 20;
+  FCollectorDetail.Top := 32;
+  FCollectorDetail.Font.Size := 10;
+  FCollectorDetail.Font.Color := SecondaryTextColor(CPanel2);
+  FCollectorDetail.Visible := False;
+
+  FDeleteBar := TProgressBar.Create(Self);
+  FDeleteBar.Parent := FCollectorPanel;
+  FDeleteBar.Left := 20;
+  FDeleteBar.Top := 48;
+  FDeleteBar.Height := 4;
+  FDeleteBar.Anchors := [akLeft, akTop, akRight];
+  FDeleteBar.Visible := False;
+
+  FDeletePoll := TTimer.Create(Self);
+  FDeletePoll.Enabled := False;
+  FDeletePoll.Interval := 33;
+  FDeletePoll.OnTimer := @DeletePollTick;
+
+  FDoneTimer := TTimer.Create(Self);
+  FDoneTimer.Enabled := False;
+  FDoneTimer.Interval := 2000;
+  FDoneTimer.OnTimer := @DoneTimerTick;
 
   { Spans the window bottom, below the collector (created after it, so
     the bottom alignment puts it lowest). }
@@ -822,8 +901,10 @@ end;
 procedure TMainForm.StartScan(const APath, AName: string; Total, FreeBytes: QWord);
 var
   Expanded: string;
+  RootChanged: Boolean;
 begin
   Expanded := ResolvePath(APath);
+  RootChanged := Expanded <> FRootPath;
   if (IncludeTrailingPathDelimiter(Expanded) = PathDelim) and
     (not FullDiskAccessGranted) then
   begin
@@ -866,7 +947,10 @@ begin
   FRootFree := FreeBytes;
   FCurrentPath := Expanded;
   FBreadcrumbs.Clear;
-  FCollector.Clear;
+  { Swift keeps the collector for the analysed root (failed deletions
+    stay staged across the rescan); a different root starts afresh. }
+  if RootChanged then
+    FCollector.Clear;
   RefreshCollector;
   FMode := umScanning;
   ShowAnalysis;
@@ -895,6 +979,7 @@ begin
   end;
   FScanBar.SetScanning(FScanThread.Bytes, FScanThread.Items, sspScanning,
     ScanFraction(FScanThread.Bytes), FScanStart);
+  ShowPartial(FScanThread.TakePartial);
   if FScanThread.Finished then
   begin
     FPoll.Enabled := False;
@@ -923,6 +1008,8 @@ begin
         ['Rescan'], [@RescanState]);
       Exit;
     end;
+    { Replaces the last partial snapshot. }
+    FreeAndNil(FTree);
     FTree := Thread.Tree;
     Thread.FTree := nil;
     FMode := umAnalysis;
@@ -954,6 +1041,19 @@ end;
 function ResolveNode(Tree: TFileTree; const RootPath, APath: string): TNodeID;
 begin
   Result := Tree.NodeIDForPath(APath, RootPath);
+end;
+
+{ DiskAnalyzer.swift partial events: show the snapshot, staying in the
+  folder being viewed when it exists there yet. }
+procedure TMainForm.ShowPartial(Partial: TFileTree);
+begin
+  if Partial = nil then
+    Exit;
+  FreeAndNil(FTree);
+  FTree := Partial;
+  if ResolveNode(FTree, FRootPath, FCurrentPath) = NoNode then
+    FCurrentPath := FRootPath;
+  ShowNode(FCurrentPath);
 end;
 
 procedure TMainForm.ShowNode(const APath: string);
@@ -1056,6 +1156,12 @@ end;
 
 procedure TMainForm.RefreshCollector;
 begin
+  { Deleting and done phases own the bar until they end. }
+  if (FDeleteJob <> nil) or FDoneTimer.Enabled then
+    Exit;
+  FCollectorDetail.Visible := False;
+  FDeleteBar.Visible := False;
+  FCollectorLabel.Font.Style := [];
   if FCollector.Count = 0 then
   begin
     FCollectorLabel.Caption :=
@@ -1090,6 +1196,9 @@ const
   ChevronW = 12;
   Gap = 10;
   NameLine = 16;
+  { FolderRowView: 22 pt icon, HStack spacing 10. }
+  IconSize = 22;
+  IconGap = 10;
 var
   LB: TListBox;
   C: TCanvas;
@@ -1099,7 +1208,7 @@ var
   Row, Cap, Fill: TRect;
   RowName, Detail, SizeText: string;
   Keep: Integer;
-  NameTop, Right, SizeLeft, CapLeft, MidY, W: Integer;
+  NameTop, Right, SizeLeft, CapLeft, MidY, W, TextLeft: Integer;
   Frac: Double;
 begin
   LB := Control as TListBox;
@@ -1201,6 +1310,12 @@ begin
     Right := CapLeft - Gap;
   end;
 
+  { icon }
+  DrawFileIcon(C, Rect(Row.Left + PadX, MidY - IconSize div 2,
+    Row.Left + PadX + IconSize, MidY - IconSize div 2 + IconSize),
+    FTree.PathOf(Node), IsDir);
+  TextLeft := Row.Left + PadX + IconSize + IconGap;
+
   { name and item count }
   C.Brush.Style := bsClear;
   C.Font.Name := 'default';
@@ -1214,7 +1329,7 @@ begin
   { Too long for the name column: truncate in the middle (CLAUDE.md:
     preserve the start and the extension) rather than clip. }
   Keep := CodePointCount(RowName);
-  while (C.TextWidth(RowName) > Right - (Row.Left + PadX)) and (Keep > 6) do
+  while (C.TextWidth(RowName) > Right - TextLeft) and (Keep > 6) do
   begin
     Dec(Keep);
     RowName := TruncateMiddle(FTree.NameOf(Node), Keep);
@@ -1230,14 +1345,14 @@ begin
   else
     NameTop := Row.Top + 1;
   { Clip horizontally only: descenders need the space below the line. }
-  C.TextRect(Rect(Row.Left + PadX, Row.Top, Right, Row.Bottom),
-    Row.Left + PadX, NameTop, RowName);
+  C.TextRect(Rect(TextLeft, Row.Top, Right, Row.Bottom),
+    TextLeft, NameTop, RowName);
   if Detail <> '' then
   begin
     C.Font.Size := 10;
     C.Font.Style := [];
     C.Font.Color := Tertiary;
-    C.TextOut(Row.Left + PadX, NameTop + NameLine + 2, Detail);
+    C.TextOut(TextLeft, NameTop + NameLine + 2, Detail);
   end;
 end;
 
@@ -1382,24 +1497,70 @@ begin
 end;
 
 procedure TMainForm.DeleteClick(Sender: TObject);
-var
-  Freed: Int64;
 begin
-  if FCollector.Count = 0 then
+  if (FCollector.Count = 0) or (FDeleteJob <> nil) then
     Exit;
   if MessageDlg(Format('Permanently delete %d item(s) (%s)? This skips Trash.',
     [FCollector.Count, FormatFileSize(FCollector.TotalBytes)]),
     mtWarning, [mbYes, mbNo], 0) <> mrYes then
     Exit;
-  Freed := FCollector.DeleteAll;
-  RefreshCollector;
-  StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
-  { CollectorBar shows what was freed (after StartScan resets it). }
-  if FCollector.Failures.Count > 0 then
-    FCollectorLabel.Caption := Format('Freed %s; %d item(s) could not be deleted',
-      [FormatFileSize(Freed), FCollector.Failures.Count])
+  { CollectorBar performDeletion: delete in the background, show progress. }
+  FDoneTimer.Enabled := False;
+  FDeleteButton.Enabled := False;
+  FDeleteJob := FCollector.StartDelete;
+  FCollectorLabel.Font.Style := [fsBold];
+  FCollectorLabel.Caption := 'Deleting…';
+  FCollectorDetail.Caption := '';
+  FCollectorDetail.Visible := True;
+  FDeleteBar.Width := FDeleteButton.Left - FDeleteBar.Left - 24;
+  FDeleteBar.Max := Max(1, FCollector.Count);
+  FDeleteBar.Position := 0;
+  FDeleteBar.Visible := True;
+  FDeletePoll.Enabled := True;
+end;
+
+procedure TMainForm.DeletePollTick(Sender: TObject);
+var
+  P: TDeletionProgress;
+  Freed: Int64;
+  Failed: Integer;
+begin
+  if FDeleteJob = nil then
+  begin
+    FDeletePoll.Enabled := False;
+    Exit;
+  end;
+  P := FDeleteJob.Progress;
+  if P.CurrentName <> '' then
+    FCollectorLabel.Caption := 'Deleting ' + P.CurrentName + '…'
   else
-    FCollectorLabel.Caption := 'Freed ' + FormatFileSize(Freed);
+    FCollectorLabel.Caption := 'Deleting…';
+  FCollectorDetail.Caption := Format('Freed %s · %d of %d',
+    [FormatFileSize(P.FreedBytes), P.Completed, P.Total]);
+  FDeleteBar.Max := Max(1, P.Total);
+  FDeleteBar.Position := Min(P.Completed, P.Total);
+  if not FDeleteJob.Finished then
+    Exit;
+  FDeletePoll.Enabled := False;
+  Freed := FCollector.FinishDelete(FDeleteJob);
+  FDeleteJob := nil;
+  Failed := FCollector.Failures.Count;
+  { Done phase (CollectorBar doneView) for 2 s; the rescan starts now. }
+  FDeleteBar.Visible := False;
+  FCollectorLabel.Caption := 'Freed ' + FormatFileSize(Freed);
+  if Failed > 0 then
+    FCollectorDetail.Caption := Format('%d couldn''t be removed', [Failed])
+  else
+    FCollectorDetail.Caption := '';
+  FCollectorDetail.Visible := Failed > 0;
+  FDoneTimer.Enabled := True;
+  StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+end;
+
+procedure TMainForm.DoneTimerTick(Sender: TObject);
+begin
+  FDoneTimer.Enabled := False;
+  RefreshCollector;
 end;
 
 end.

@@ -340,21 +340,22 @@ begin
   Icon := nil;
   Px := 2 * (Bounds.Right - Bounds.Left);
   {$IFDEF DARWIN}
-  if IsDirectory then
+  { FolderRowView: the path's own icon (FileIcon.icon(for:) — app bundles
+    and special folders included); until then the generic folder or the
+    extension's type icon (FileIcon.typeIcon). }
+  if not FileIconCache.Find(Path, Icon) then
   begin
-    if FolderIcon = nil then
-      FolderIcon := LoadTypeIcon('public.folder', Px);
-    Icon := FolderIcon;
-  end
-  else if not FileIconCache.Find(Path, Icon) then
-  begin
-    { FileIcon.icon(for:) — NSWorkspace icon for the path itself. }
     Icon := LoadIcon(Path, Px);
     if Icon <> nil then
       FileIconCache.Put(Path, Icon)
+    else if IsDirectory then
+    begin
+      if FolderIcon = nil then
+        FolderIcon := LoadTypeIcon('public.folder', Px);
+      Icon := FolderIcon;
+    end
     else
     begin
-      { FileIcon.typeIcon: by extension, cached separately. }
       Ext := ExtensionTypeName(Path);
       if not TypeIconCache.Find(Ext, Icon) then
       begin
