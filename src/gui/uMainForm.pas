@@ -13,7 +13,7 @@ uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformAppearance,
-  GuiColors;
+  GuiColors, BreadcrumbBar;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -54,7 +54,7 @@ type
     FNav: TPanel;
     FDisksBtn: TButton;
     FBackBtn: TButton;
-    FCrumb: TLabel;
+    FCrumbBar: TBreadcrumbBar;
     FRefreshBtn: TButton;
     FBody: TPanel;
     FListPanel: TPanel;
@@ -103,6 +103,7 @@ type
     procedure FolderClick(Sender: TObject);
     procedure RefreshVolClick(Sender: TObject);
     procedure ListDblClick(Sender: TObject);
+    procedure CrumbNavigate(const Path: string);
     procedure ListDrawItem(Control: TWinControl; Index: Integer;
       ARect: TRect; State: TOwnerDrawState);
     procedure ListMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
@@ -235,7 +236,8 @@ begin
   ShowPicker;
   RefreshVolumes;
   { Screenshots and automation: OPENDISK_GUI_SCAN=<folder> scans that folder
-    at launch instead of waiting for the folder dialog. }
+    at launch instead of waiting for the folder dialog (and
+    OPENDISK_GUI_SHOW=<subfolder> then opens a folder inside it). }
   if GetEnvironmentVariable('OPENDISK_GUI_SCAN') <> '' then
     StartScan(GetEnvironmentVariable('OPENDISK_GUI_SCAN'), '', 0, 0);
 end;
@@ -336,13 +338,13 @@ begin
   FBackBtn.Height := 28;
   FBackBtn.OnClick := @BackClick;
 
-  FCrumb := TLabel.Create(Self);
-  FCrumb.Parent := FNav;
-  FCrumb.Left := 144;
-  FCrumb.Top := 16;
-  FCrumb.Font.Size := 12;
-  FCrumb.Font.Color := CInk;
-  FCrumb.Caption := '';
+  FCrumbBar := TBreadcrumbBar.Create(Self);
+  FCrumbBar.Parent := FNav;
+  FCrumbBar.Left := 140;
+  FCrumbBar.Top := 12;
+  FCrumbBar.Height := 28;
+  FCrumbBar.Color := CPanel;
+  FCrumbBar.OnNavigate := @CrumbNavigate;
 
   FRefreshBtn := TButton.Create(Self);
   FRefreshBtn.Parent := FNav;
@@ -352,6 +354,12 @@ begin
   FRefreshBtn.Top := 12;
   FRefreshBtn.Anchors := [akTop, akRight];
   FRefreshBtn.OnClick := @RefreshClick;
+
+  { The trail fills the space up to the Refresh button and follows resizes. }
+  FCrumbBar.AnchorSideRight.Control := FRefreshBtn;
+  FCrumbBar.AnchorSideRight.Side := asrLeft;
+  FCrumbBar.BorderSpacing.Right := 12;
+  FCrumbBar.Anchors := [akLeft, akTop, akRight];
 
   FCollectorPanel := TPanel.Create(Self);
   FCollectorPanel.Parent := FAnalysis;
@@ -443,7 +451,7 @@ begin
 
   FPickerTitle.Font.Color := CInk;
   FPickerSub.Font.Color := SecondaryTextColor(CBg);
-  FCrumb.Font.Color := CInk;
+  FCrumbBar.Color := CPanel;
   FCollectorLabel.Font.Color := SecondaryTextColor(CPanel2);
   FListHeader.Font.Color := SecondaryTextColor(CPanel);
   FList.Font.Color := CInk;
@@ -693,7 +701,7 @@ begin
   RefreshCollector;
   FMode := umScanning;
   ShowAnalysis;
-  FCrumb.Caption := FRootName + '  —  preparing…';
+  FCrumbBar.SetPath(Expanded, FRootName, Expanded);
   Caption := FRootName + ' — OpenDisk';
   FStatus.SimpleText := 'Scanning ' + Expanded + '…';
   { Disks stays enabled: it cancels the scan. }
@@ -713,7 +721,6 @@ begin
   end;
   FStatus.SimpleText := Format('Scanning: %s (%d items)',
     [FormatFileSize(FScanThread.Bytes), FScanThread.Items]);
-  FCrumb.Caption := FRootName + '  —  ' + FormatFileSize(FScanThread.Bytes);
   if FScanThread.Finished then
   begin
     FPoll.Enabled := False;
@@ -724,7 +731,7 @@ end;
 procedure TMainForm.ScanFinished;
 var
   Thread: TScanThread;
-  Cap: string;
+  Cap, ShowPath: string;
 begin
   Thread := FScanThread;
   FScanThread := nil;
@@ -753,6 +760,15 @@ begin
     FStatus.SimpleText := Format('%s · %d items%s',
       [FormatFileSize(FTree.SizeOf(RootID)), FTree.NodeCount - 1, Cap]);
     ShowNode(FRootPath);
+    { Automation: OPENDISK_GUI_SHOW=<folder inside the scan> opens it. }
+    ShowPath := GetEnvironmentVariable('OPENDISK_GUI_SHOW');
+    if ShowPath <> '' then
+    begin
+      { Relative values are inside the scan; absolute ones are used as is. }
+      if ShowPath[1] <> PathDelim then
+        ShowPath := IncludeTrailingPathDelimiter(FRootPath) + ShowPath;
+      CrumbNavigate(ResolvePath(ShowPath));
+    end;
   finally
     Thread.Free;
   end;
@@ -768,7 +784,6 @@ var
   Node: TNodeID;
   NodeName: string;
   Chart: TChartItem;
-  Rel: string;
 begin
   if FTree = nil then
     Exit;
@@ -781,15 +796,9 @@ begin
     NodeName := FRootName;
   Chart := TChartItem.Build(FTree, Node, NodeName, APath);
   FChart.TakeRoot(Chart);
-  if APath = FRootPath then
-    Rel := FRootName
-  else
-  begin
-    Rel := Copy(APath, Length(IncludeTrailingPathDelimiter(FRootPath)) + 1, MaxInt);
-    Rel := FRootName + ' / ' + StringReplace(Rel, DirectorySeparator, ' / ', [rfReplaceAll]);
-  end;
-  FCrumb.Caption := Rel + '  ·  ' + FormatFileSize(FTree.SizeOf(Node));
-  FListHeader.Caption := 'Largest in ' + NodeName;
+  FCrumbBar.SetPath(FRootPath, FRootName, APath);
+  FListHeader.Caption := 'Largest in ' + NodeName + '  ·  ' +
+    FormatFileSize(FTree.SizeOf(Node));
   RefreshList;
   FBackBtn.Enabled := FBreadcrumbs.Count > 0;
 end;
@@ -1045,6 +1054,17 @@ end;
 procedure TMainForm.ListMouseLeave(Sender: TObject);
 begin
   SetListHover(-1);
+end;
+
+procedure TMainForm.CrumbNavigate(const Path: string);
+begin
+  if (FTree = nil) or (Path = FCurrentPath) then
+    Exit;
+  { Validate before touching the back stack: ShowNode ignores unknown paths. }
+  if ResolveNode(FTree, FRootPath, Path) = NoNode then
+    Exit;
+  FBreadcrumbs.Add(FCurrentPath);
+  ShowNode(Path);
 end;
 
 procedure TMainForm.ListDblClick(Sender: TObject);

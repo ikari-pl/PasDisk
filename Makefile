@@ -49,7 +49,7 @@ tools/ldwrap/ld: tools/ldwrap/ld.in
 test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 		tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
-		tests/test_traversal tests/test_volumeroot
+		tests/test_traversal tests/test_volumeroot tests/test_texttrim
 	./tests/test_check_platform.sh
 	./tools/check-platform.sh
 	./tests/test_filetree
@@ -63,6 +63,7 @@ test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 	./tests/test_ringslayout
 	./tests/test_traversal
 	./tests/test_volumeroot
+	./tests/test_texttrim
 
 tests/test_filetree: tests/test_filetree.pas $(UNITDIR)/FileTree.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_filetree tests/test_filetree.pas
@@ -113,6 +114,9 @@ tests/test_volumeroot: tests/test_volumeroot.pas $(UNITDIR)/Incremental.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Volumes.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_volumeroot tests/test_volumeroot.pas
+
+tests/test_texttrim: tests/test_texttrim.pas $(UNITDIR)/TextTrim.pas
+	$(FPC) $(BUILDFLAGS) -otests/test_texttrim tests/test_texttrim.pas
 
 clean:
 	rm -f opendisk opendisk-gui tests/test_filetree tests/test_dirreader \
