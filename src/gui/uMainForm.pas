@@ -18,6 +18,7 @@ uses
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
+  TListSortField = (lsName, lsSize);
 
   TScanThread = class(TThread)
   private
@@ -78,8 +79,13 @@ type
     FRefreshBtn: TButton;
     FBody: TPanel;
     FListPanel: TPanel;
-    FListHeader: TLabel;
+    { DiskAnalysisView columnHeader: 'Name' and 'Size', chevron on the
+      active column. }
+    FListHeader: TPaintBox;
     FList: TListBox;
+    FSortField: TListSortField;
+    FSortAscending: Boolean;
+    FSelectionAnchor: Integer;
     { Largest size among the listed children (ScanResultsView.swift maxSize)
       and the row under the pointer, -1 for none. }
     FListMaxSize: Int64;
@@ -146,6 +152,17 @@ type
       ARect: TRect; State: TOwnerDrawState);
     procedure ListMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
     procedure ListMouseLeave(Sender: TObject);
+    procedure ListMouseDown(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure ListKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    procedure SortNameClick(Sender: TObject);
+    procedure SortSizeClick(Sender: TObject);
+    procedure UpdateSortHeader;
+    procedure ListHeaderPaint(Sender: TObject);
+    procedure ListHeaderMouseUp(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure ApplyListAutomation;
+    procedure SortListRows;
     procedure SetListHover(Index: Integer);
     procedure ChartSelect(Sender: TObject; const APath: string; IsCenter: Boolean);
     procedure DisksClick(Sender: TObject);
@@ -563,16 +580,17 @@ begin
   FListPanel.BevelOuter := bvNone;
   FListPanel.Color := CPanel;
 
-  FListHeader := TLabel.Create(Self);
+  FListHeader := TPaintBox.Create(Self);
   FListHeader.Parent := FListPanel;
   FListHeader.Align := alTop;
-  FListHeader.AutoSize := False;
-  FListHeader.Height := 36;
-  FListHeader.Layout := tlCenter;
-  FListHeader.BorderSpacing.Left := 16;
-  FListHeader.Caption := 'Largest first';
-  FListHeader.Font.Size := 10;
-  FListHeader.Font.Color := SecondaryTextColor(CPanel);
+  { .caption line + vertical padding 5 + divider. }
+  FListHeader.Height := 24;
+  FListHeader.OnPaint := @ListHeaderPaint;
+  FListHeader.OnMouseUp := @ListHeaderMouseUp;
+
+  FSortField := lsSize;
+  FSortAscending := False;
+  FSelectionAnchor := -1;
 
   FList := TListBox.Create(Self);
   FList.Parent := FListPanel;
@@ -581,6 +599,8 @@ begin
   FList.Color := CPanel;
   FList.Font.Color := CInk;
   FList.Style := lbOwnerDrawFixed;
+  FList.MultiSelect := True;
+  FList.ExtendedSelect := True;
   FList.ItemHeight := 36;
   FList.OnDrawItem := @ListDrawItem;
   { The accent selection shows focus, as in Swift lists; no extra
@@ -588,6 +608,8 @@ begin
   FList.Options := FList.Options - [lboDrawFocusRect];
   FList.OnMouseMove := @ListMouseMove;
   FList.OnMouseLeave := @ListMouseLeave;
+  FList.OnMouseDown := @ListMouseDown;
+  FList.OnKeyDown := @ListKeyDown;
   FList.OnDblClick := @ListDblClick;
   FListHover := -1;
 
@@ -632,7 +654,7 @@ begin
   FPickerSub.Font.Color := SecondaryTextColor(CBg);
   FCrumbBar.Color := CPanel;
   FCollectorLabel.Font.Color := SecondaryTextColor(CPanel2);
-  FListHeader.Font.Color := SecondaryTextColor(CPanel);
+  FListHeader.Invalidate;
   FList.Font.Color := CInk;
   FChart.Color := CBg;
 
@@ -1140,9 +1162,8 @@ begin
     FCrumbBar.SetPath(FRootPath, FRootName, APath);
     { windowTitle drops the '::'. }
     Caption := HiddenSpaceFolderName;
-    FListHeader.Caption := 'Largest in ' + HiddenSpaceFolderName + '  ·  ' +
-      FormatFileSize(CleanableTotal(Entries));
     RefreshList;
+    UpdateSortHeader;
     FBackBtn.Enabled := FBreadcrumbs.Count > 0;
     FScanBar.SetTotals(CleanableTotal(Entries), FList.Items.Count);
     Exit;
@@ -1159,12 +1180,106 @@ begin
   FCrumbBar.SetPath(FRootPath, FRootName, APath);
   { DiskAnalysisView.swift windowTitle: the folder being shown. }
   Caption := NodeName;
-  FListHeader.Caption := 'Largest in ' + NodeName + '  ·  ' +
-    FormatFileSize(FTree.SizeOf(Node));
   RefreshList;
+  UpdateSortHeader;
   FBackBtn.Enabled := FBreadcrumbs.Count > 0;
   { displayedTotalBytes and rootItems.count. }
   FScanBar.SetTotals(FTree.SizeOf(Node), FList.Items.Count);
+end;
+
+procedure TMainForm.UpdateSortHeader;
+begin
+  FListHeader.Invalidate;
+end;
+
+const
+  { columnHeader: leading 40 (the row text after the icon), trailing 20;
+    the size column ends where the rows' size text ends. }
+  HeaderNameX = 38;
+  HeaderSizeRight = 38;
+  HeaderChevron = 8;
+
+{ x where the Size label (with its chevron) starts in the header. }
+function SizeHeaderLeft(Canvas: TCanvas; Width: Integer): Integer;
+begin
+  Result := Width - HeaderSizeRight - Canvas.TextWidth('Size') - 3 - HeaderChevron;
+end;
+
+procedure TMainForm.ListHeaderPaint(Sender: TObject);
+var
+  C: TCanvas;
+  Bg, Ink: TColor;
+  Glyph: TBitmap;
+  X, Y: Integer;
+
+  procedure DrawColumn(const Text: string; AtX: Integer; Active: Boolean);
+  begin
+    C.TextOut(AtX, Y, Text);
+    if not Active then
+      Exit;
+    { chevron.up when ascending, chevron.down when descending, 8 pt bold. }
+    if FSortAscending then
+      Glyph := SystemSymbolBitmap('chevron.up', 2 * HeaderChevron, Ink)
+    else
+      Glyph := SystemSymbolBitmap('chevron.down', 2 * HeaderChevron, Ink);
+    if Glyph <> nil then
+    try
+      X := AtX + C.TextWidth(Text) + 3;
+      C.StretchDraw(Rect(X, Y + 3, X + HeaderChevron, Y + 3 + HeaderChevron), Glyph);
+    finally
+      Glyph.Free;
+    end;
+  end;
+
+begin
+  C := FListHeader.Canvas;
+  Bg := ColorToRGB(CPanel);
+  Ink := SecondaryTextColor(Bg);
+  C.Brush.Style := bsSolid;
+  C.Brush.Color := Bg;
+  C.FillRect(FListHeader.ClientRect);
+  C.Pen.Color := ColorToRGB(clBtnShadow);
+  C.Line(0, FListHeader.Height - 1, FListHeader.Width, FListHeader.Height - 1);
+  C.Brush.Style := bsClear;
+  C.Font.Size := 10;
+  C.Font.Style := [fsBold];
+  C.Font.Color := Ink;
+  Y := (FListHeader.Height - 1 - C.TextHeight('Ag')) div 2;
+  DrawColumn('Name', HeaderNameX, FSortField = lsName);
+  DrawColumn('Size', SizeHeaderLeft(C, FListHeader.Width), FSortField = lsSize);
+end;
+
+procedure TMainForm.ListHeaderMouseUp(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+var
+  SizeLeft: Integer;
+begin
+  if Button <> mbLeft then
+    Exit;
+  FListHeader.Canvas.Font.Size := 10;
+  FListHeader.Canvas.Font.Style := [fsBold];
+  SizeLeft := SizeHeaderLeft(FListHeader.Canvas, FListHeader.Width);
+  if X >= SizeLeft - 8 then
+    SortSizeClick(Sender)
+  else if (X >= HeaderNameX - 8) and
+    (X <= HeaderNameX + FListHeader.Canvas.TextWidth('Name') + 3 + HeaderChevron + 8) then
+    SortNameClick(Sender);
+end;
+
+procedure TMainForm.SortNameClick(Sender: TObject);
+begin
+  if FSortField = lsName then FSortAscending := not FSortAscending
+  else begin FSortField := lsName; FSortAscending := True; end;
+  RefreshList;
+  UpdateSortHeader;
+end;
+
+procedure TMainForm.SortSizeClick(Sender: TObject);
+begin
+  if FSortField = lsSize then FSortAscending := not FSortAscending
+  else begin FSortField := lsSize; FSortAscending := False; end;
+  RefreshList;
+  UpdateSortHeader;
 end;
 
 { DiskAnalysisView progressFraction: scanned bytes over the volume's used
@@ -1274,8 +1389,127 @@ begin
           FListMaxSize := FPurgeableTotal;
       end;
     end;
+    SortListRows;
+    ApplyListAutomation;
   finally
     FList.Items.EndUpdate;
+  end;
+end;
+
+procedure TMainForm.SortListRows;
+var
+  I, J: Integer;
+  A, B: TNodeID;
+  Swap: Boolean;
+  NameA, NameB: string;
+  SizeA, SizeB: Int64;
+  Comparison: Integer;
+begin
+  for I := 0 to FList.Items.Count - 2 do
+    for J := I + 1 to FList.Items.Count - 1 do
+    begin
+      A := TNodeID(PtrInt(FList.Items.Objects[I]));
+      B := TNodeID(PtrInt(FList.Items.Objects[J]));
+      if A = PurgeableRowID then SizeA := FPurgeableTotal else SizeA := FTree.SizeOf(A);
+      if B = PurgeableRowID then SizeB := FPurgeableTotal else SizeB := FTree.SizeOf(B);
+      NameA := FList.Items[I];
+      NameB := FList.Items[J];
+      if FSortField = lsName then
+        Comparison := CompareText(NameA, NameB)
+      else
+      begin
+        if SizeA < SizeB then Comparison := -1
+        else if SizeA > SizeB then Comparison := 1
+        else Comparison := 0;
+      end;
+      if FSortAscending then Swap := Comparison > 0
+      else Swap := Comparison < 0;
+      if Swap then
+      begin
+        FList.Items.Exchange(I, J);
+      end;
+    end;
+end;
+
+procedure TMainForm.ListMouseDown(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+var
+  Index, I, Lo, Hi: Integer;
+  Node: TNodeID;
+begin
+  if Button <> mbLeft then Exit;
+  Index := FList.ItemAtPos(Point(X, Y), True);
+  if (Index < 0) or (Index >= FList.Items.Count) then Exit;
+  Node := TNodeID(PtrInt(FList.Items.Objects[Index]));
+  if Node = PurgeableRowID then Exit;
+  if ssShift in Shift then
+  begin
+    if (FSelectionAnchor >= 0) and (FSelectionAnchor < FList.Items.Count) then
+    begin
+      Lo := Min(FSelectionAnchor, Index);
+      Hi := Max(FSelectionAnchor, Index);
+      FList.ClearSelection;
+      for I := Lo to Hi do
+        if TNodeID(PtrInt(FList.Items.Objects[I])) <> PurgeableRowID then
+          FList.Selected[I] := True;
+    end
+    else
+      FList.Selected[Index] := True;
+  end
+  else if ssMeta in Shift then
+    FList.Selected[Index] := not FList.Selected[Index]
+  else
+  begin
+    FList.ClearSelection;
+    FList.Selected[Index] := True;
+  end;
+  FSelectionAnchor := Index;
+  FList.Invalidate;
+end;
+
+procedure TMainForm.ListKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if Key = VK_RETURN then
+  begin
+    Key := 0;
+    ListDblClick(Sender);
+  end;
+end;
+
+procedure TMainForm.ApplyListAutomation;
+var
+  Value, Field, Direction, Names: string;
+  P, I, Start, Stop: Integer;
+begin
+  Value := GetEnvironmentVariable('OPENDISK_GUI_SORT');
+  if Value <> '' then
+  begin
+    P := Pos(',', Value);
+    if P > 0 then begin Field := Copy(Value, 1, P - 1); Direction := Copy(Value, P + 1, MaxInt); end
+    else begin Field := Value; Direction := ''; end;
+    if LowerCase(Field) = 'name' then FSortField := lsName else if LowerCase(Field) = 'size' then FSortField := lsSize;
+    if LowerCase(Direction) = 'asc' then
+      FSortAscending := True
+    else if LowerCase(Direction) = 'desc' then
+      FSortAscending := False
+    else
+      FSortAscending := FSortField = lsName;
+    SortListRows;
+    UpdateSortHeader;
+  end;
+  Names := GetEnvironmentVariable('OPENDISK_GUI_SELECT');
+  if Names = '' then Exit;
+  FList.ClearSelection;
+  Start := 1;
+  while Start <= Length(Names) do
+  begin
+    P := Pos(',', Copy(Names, Start, MaxInt));
+    if P = 0 then Stop := Length(Names) + 1 else Stop := Start + P - 1;
+    for I := 0 to FList.Items.Count - 1 do
+      if (CompareText(FList.Items[I], Copy(Names, Start, Stop - Start)) = 0) and
+        (TNodeID(PtrInt(FList.Items.Objects[I])) <> PurgeableRowID) then
+        FList.Selected[I] := True;
+    Start := Stop + 1;
   end;
 end;
 
