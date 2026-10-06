@@ -1341,6 +1341,13 @@ begin
   RefreshCollector;
   FMode := umScanning;
   ShowAnalysis;
+  { DiskAnalysisView: ProgressView("Preparing scan…") while the scan has
+    nothing to list yet. }
+  FAnalysisState.SetBusy('Preparing scan…');
+  FAnalysisState.Visible := True;
+  FAnalysisState.BringToFront;
+  { ScanStatusBar belongs to the listing branch: none until rows exist. }
+  FScanBar.Visible := False;
   FCrumbBar.SetPath(Expanded, FRootName, Expanded);
   Caption := FRootName;
   FScanStart := Now;
@@ -1568,6 +1575,12 @@ var
 begin
   if FTree = nil then
     Exit;
+  { The first rows replace "Preparing scan…". }
+  if FAnalysisState.Visible and FAnalysisState.Busy then
+  begin
+    HideAnalysisState;
+    FScanBar.Visible := True;
+  end;
   if APath = HiddenSpaceSentinelPath then
   begin
     { DiskAnalyzer.navigateToPath(sentinel) / displayCleanableSpace. }

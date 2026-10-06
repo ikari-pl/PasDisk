@@ -139,7 +139,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | gui/PlatformFileDrag.pas; gui/uMainForm.pas (FileDragEnded) | N/A | Done | od-31j.18.6 | Rows and segments export file URLs, copy or move outside the app (87e2000; checked by hand); when a dragged file is gone after the drop, the view refreshes (filesMovedNotification). |
 | Display limits: 100 children below the root, hide < 1 KiB | DiskAnalyzer.swift:7-8, 344-368 | gui/uMainForm.pas:717-729 (shows every child > 0 bytes) | N/A | Done | od-31j.48 | a5de8ce. |
 | Skeleton listing before the first results | DiskAnalyzer.swift:89-96, 370-417 | — | N/A | Missing | — | |
-| Scanning placeholder ("Preparing scan…") | DiskAnalysisView.swift:80-83 | gui/uMainForm.pas:600 (crumb text) | N/A | Partial | od-31j.18.4 | |
+| Scanning placeholder ("Preparing scan…") | DiskAnalysisView.swift:80-83 | gui/EmptyStateView.pas (SetBusy); gui/uMainForm.pas (StartScan, ShowNode) | N/A | Done | od-31j.18.4 | A spinner and "Preparing scan…" over the body, no status bar, until the first tree. |
 | Empty / FDA-required / unreadable states | DiskAnalysisView.swift:508-542 | gui/uMainForm.pas:573-576, 639-644 (`MessageDlg`, status text) | N/A | Done | od-31j.18.12 | 07394ea. |
 | Scan status bar: phase text, progress bar vs. used space, files/sec, "Scanned in", total · items | Views/Components/ScanStatusBar.swift:15-77; DiskAnalysisView.swift:484-487 | gui/uMainForm.pas:618-620, 650-655 (`TStatusBar` simple text) | N/A | Done | od-31j.18.7 | 5ae2396; checking-changes phase since 9b2f060. |
 | Status bar capacity readout (bar + "X available of Y", purgeable tooltip, a11y) | ScanStatusBar.swift:60-112; DiskAnalysisView.swift:134-137, 489-494 | gui/uMainForm.pas:650-653 (text "volume used / total") | N/A | Partial | od-31j.18.7 | Bar, text and hint (5ae2396); no accessibility element. |
@@ -231,8 +231,8 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 82 |
-| Partial | 3 | 4 |
+| Done | 41 | 83 |
+| Partial | 3 | 3 |
 | Missing | 1 | 7 |
 | N/A | 58 | 10 |
 | Unverified | 2 | 2 |

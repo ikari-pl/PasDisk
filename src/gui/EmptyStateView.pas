@@ -3,7 +3,8 @@
   A centred block: SF Symbol glyph, bold title, secondary description
   wrapped to a readable width, then optional buttons side by side (the
   first is the default). Used for "No Disks Found", "Full Disk Access
-  Required", "Couldn't Read This Location" and "Nothing to Show". }
+  Required", "Couldn't Read This Location" and "Nothing to Show".
+  SetBusy shows ProgressView("…") instead: a spinner over a label. }
 
 unit EmptyStateView;
 
@@ -12,7 +13,7 @@ unit EmptyStateView;
 interface
 
 uses
-  Classes, SysUtils, Controls, Graphics, StdCtrls, Types;
+  Classes, SysUtils, Controls, Graphics, StdCtrls, ExtCtrls, Types;
 
 type
   TEmptyStateView = class(TCustomControl)
@@ -22,6 +23,11 @@ type
     FGlyphColor: TColor;
     FButtons: array of TButton;
     FBlockTop, FTitleH, FDescH: Integer;
+    FBusy: Boolean;
+    FSpin: TTimer;
+    FSpinStart: QWord;
+    procedure SpinTick(Sender: TObject);
+    procedure PaintBusy;
     procedure Measure;
     procedure LayoutButtons;
     function DescriptionRect: TRect;
@@ -34,6 +40,9 @@ type
     { Replaces the content; Captions[i] runs Handlers[i]. }
     procedure SetState(const Symbol, Title, Description: string;
       const Captions: array of string; const Handlers: array of TNotifyEvent);
+    { ProgressView(Title): an indeterminate spinner and its label. }
+    procedure SetBusy(const Title: string);
+    property Busy: Boolean read FBusy;
   end;
 
 implementation
@@ -57,6 +66,85 @@ constructor TEmptyStateView.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
   ControlStyle := ControlStyle + [csOpaque];
+  FSpin := TTimer.Create(Self);
+  FSpin.Enabled := False;
+  { 12 steps a second, like the system spinner. }
+  FSpin.Interval := 83;
+  FSpin.OnTimer := @SpinTick;
+end;
+
+function Blend(A, B: TColor; T: Double): TColor;
+var
+  CA, CB: LongInt;
+begin
+  CA := ColorToRGB(A);
+  CB := ColorToRGB(B);
+  Result := RGBToColor(
+    Round(Red(CA) + (Red(CB) - Red(CA)) * T),
+    Round(Green(CA) + (Green(CB) - Green(CA)) * T),
+    Round(Blue(CA) + (Blue(CB) - Blue(CA)) * T));
+end;
+
+procedure TEmptyStateView.SetBusy(const Title: string);
+var
+  I: Integer;
+begin
+  for I := 0 to High(FButtons) do
+    FButtons[I].Free;
+  FButtons := nil;
+  FSymbol := '';
+  FDescription := '';
+  FTitle := Title;
+  FBusy := True;
+  FSpinStart := GetTickCount64;
+  FSpin.Enabled := True;
+  Invalidate;
+end;
+
+procedure TEmptyStateView.SpinTick(Sender: TObject);
+begin
+  { No timer while hidden or idle. }
+  if not FBusy or not IsVisible then
+  begin
+    FSpin.Enabled := FBusy and Visible;
+    if not FBusy then
+      Exit;
+  end;
+  if IsVisible then
+    Invalidate;
+end;
+
+procedure TEmptyStateView.PaintBusy;
+const
+  Spokes = 12;
+  Radius = 16;
+var
+  Secondary, Bg, Ink: TColor;
+  CX, CY, I, Lit, Age: Integer;
+  A: Double;
+begin
+  Bg := ColorToRGB(Color);
+  Secondary := SecondaryTextColor(Bg);
+  Ink := ColorToRGB(clWindowText);
+  CX := ClientWidth div 2;
+  CY := ClientHeight div 2 - 12;
+  Lit := ((GetTickCount64 - FSpinStart) div 83) mod Spokes;
+  Canvas.Pen.Width := 3;
+  for I := 0 to Spokes - 1 do
+  begin
+    A := I * 2 * Pi / Spokes - Pi / 2;
+    { The lit spoke is darkest; the trail fades behind it. }
+    Age := (Lit - I + Spokes) mod Spokes;
+    Canvas.Pen.Color := Blend(Ink, Bg, 0.25 + 0.6 * Age / (Spokes - 1));
+    Canvas.Line(CX + Round(Cos(A) * Radius * 0.5), CY + Round(Sin(A) * Radius * 0.5),
+      CX + Round(Cos(A) * Radius), CY + Round(Sin(A) * Radius));
+  end;
+  Canvas.Pen.Width := 1;
+  Canvas.Brush.Style := bsClear;
+  Canvas.Font.Size := DescSize;
+  Canvas.Font.Style := [];
+  Canvas.Font.Color := Secondary;
+  Canvas.TextOut((ClientWidth - Canvas.TextWidth(FTitle)) div 2, CY + Radius + 10, FTitle);
 end;
 
 destructor TEmptyStateView.Destroy;
@@ -70,6 +158,8 @@ procedure TEmptyStateView.SetState(const Symbol, Title, Description: string;
 var
   I: Integer;
 begin
+  FBusy := False;
+  FSpin.Enabled := False;
   for I := 0 to High(FButtons) do
     FButtons[I].Free;
   SetLength(FButtons, Length(Captions));
@@ -168,6 +258,11 @@ begin
   Canvas.Brush.Color := Bg;
   Canvas.Brush.Style := bsSolid;
   Canvas.FillRect(ClientRect);
+  if FBusy then
+  begin
+    PaintBusy;
+    Exit;
+  end;
   Measure;
   Y := FBlockTop;
 
