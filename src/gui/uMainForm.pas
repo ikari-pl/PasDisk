@@ -16,7 +16,7 @@ uses
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
-  PlatformQuickLook, ThinSplitter, PlatformToolbar;
+  PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -203,6 +203,8 @@ type
     procedure UpdateSubtitle(TotalBytes: Int64);
     procedure ToolbarSearch(const Query: string);
     procedure SetUpToolbar;
+    procedure AddMenuItem(const ACaption, Symbol: string; Handler: TNotifyEvent;
+      ItemEnabled: Boolean = True);
     procedure BodyResize(Sender: TObject);
     procedure SplitterMoved(Sender: TObject);
     procedure SplitterDrag(Sender: TObject; var NewWidth: Integer);
@@ -476,6 +478,21 @@ end;
   Unmount, search field and Refresh, leaving the breadcrumb bar
   (BreadcrumbBar above the split; Swift has no back button). Without a
   native toolbar the row keeps them. }
+{ A context-menu item with its SF Symbol (Label(_, systemImage:)). }
+procedure TMainForm.AddMenuItem(const ACaption, Symbol: string; Handler: TNotifyEvent;
+  ItemEnabled: Boolean);
+var
+  M: TMenuItem;
+begin
+  M := TMenuItem.Create(FRowMenu);
+  M.Caption := ACaption;
+  M.Enabled := ItemEnabled;
+  M.OnClick := Handler;
+  FRowMenu.Items.Add(M);
+  if (ACaption <> '-') and (Symbol <> '') then
+    SetMenuItemSymbol(M, Symbol);
+end;
+
 procedure TMainForm.SetUpToolbar;
 var
   H: TToolbarHandlers;
@@ -2382,43 +2399,20 @@ end;
   Copy Path. }
 procedure TMainForm.PopUpFileMenu(const Item: TFolderItem; SelectedCount: Integer;
   const ScreenPt: TPoint);
-var
-  M: TMenuItem;
 begin
   FMenuItem := Item;
   FRowMenu.Items.Clear;
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := 'Add to Collector';
-  M.Enabled := not IsProtectedPath(Item.Path);
-  M.OnClick := @MenuAddClick;
-  FRowMenu.Items.Add(M);
+  AddMenuItem('Add to Collector', 'trash', @MenuAddClick, not IsProtectedPath(Item.Path));
   if SelectedCount > 1 then
-  begin
-    M := TMenuItem.Create(FRowMenu);
-    M.Caption := Format('Add %d Selected to Collector', [SelectedCount]);
-    M.OnClick := @MenuAddSelectedClick;
-    FRowMenu.Items.Add(M);
-  end;
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := '-';
-  FRowMenu.Items.Add(M);
+    AddMenuItem(Format('Add %d Selected to Collector', [SelectedCount]), 'trash',
+      @MenuAddSelectedClick);
+  AddMenuItem('-', '', nil);
   { FolderRowView: Quick Look when the row has onQuickLook (folder rows,
     not FileActionsMenu on the chart). }
   if FMenuRow >= 0 then
-  begin
-    M := TMenuItem.Create(FRowMenu);
-    M.Caption := 'Quick Look';
-    M.OnClick := @MenuQuickLookClick;
-    FRowMenu.Items.Add(M);
-  end;
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := 'Show in Finder';
-  M.OnClick := @MenuShowInFinderClick;
-  FRowMenu.Items.Add(M);
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := 'Copy Path';
-  M.OnClick := @MenuCopyPathClick;
-  FRowMenu.Items.Add(M);
+    AddMenuItem('Quick Look', 'eye', @MenuQuickLookClick);
+  AddMenuItem('Show in Finder', 'folder', @MenuShowInFinderClick);
+  AddMenuItem('Copy Path', 'doc.on.doc', @MenuCopyPathClick);
   FRowMenu.PopUp(ScreenPt.X, ScreenPt.Y);
 end;
 
@@ -2507,25 +2501,12 @@ begin
   FMenuItem.ItemCount := 0;
   FMenuRow := -1;
   FRowMenu.Items.Clear;
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := 'Preview';
-  M.OnClick := @CollectorPreviewClick;
-  FRowMenu.Items.Add(M);
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := 'Show in Finder';
-  M.OnClick := @MenuShowInFinderClick;
-  FRowMenu.Items.Add(M);
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := 'Open in Terminal';
-  M.OnClick := @CollectorTerminalClick;
-  FRowMenu.Items.Add(M);
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := '-';
-  FRowMenu.Items.Add(M);
-  M := TMenuItem.Create(FRowMenu);
-  M.Caption := 'Remove “' + F.Name + '” from Collector';
-  M.OnClick := @CollectorRemoveClick;
-  FRowMenu.Items.Add(M);
+  AddMenuItem('Preview', 'eye', @CollectorPreviewClick);
+  AddMenuItem('Show in Finder', 'folder', @MenuShowInFinderClick);
+  AddMenuItem('Open in Terminal', 'terminal', @CollectorTerminalClick);
+  AddMenuItem('-', '', nil);
+  AddMenuItem('Remove “' + F.Name + '” from Collector', 'xmark.circle',
+    @CollectorRemoveClick);
   FRowMenu.PopUp(ScreenPt.X, ScreenPt.Y);
 end;
 

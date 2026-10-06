@@ -76,6 +76,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="PlatformMenus.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="PlatformFileDrag.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

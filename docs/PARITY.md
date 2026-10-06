@@ -134,7 +134,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Folder rows: file icon, name weight, "N items", size bar, size, chevron, hover/selection | Views/Components/FolderRowView.swift:47-121; Views/Analysis/ScanResultsView.swift | gui/uMainForm.pas ListDrawItem | N/A | Done | od-31j.18.3, od-31j.18.17 | Native path icons since 6975b1a. |
 | Sortable Name/Size column header | DiskAnalysisView.swift:216-228, 340-375 | gui/uMainForm.pas sort header and visible-list sorting | N/A | Done | od-31j.18.3 | 1fbc7ac adds active chevrons, Swift default directions, and sorting after collector filtering. |
 | Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | gui/uMainForm.pas list selection/context menu | N/A | Done | od-31j.18.16 | Native table selection since 39b1d2f (the hand-rolled Shift/Cmd handling of 1fbc7ac toggled Cmd-clicks back); fa5f1c2 adds Add N Selected. |
-| Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | gui/uMainForm.pas; units/PlatformShell.pas | N/A | Partial | od-31j.50 | Add, Add N Selected, Show in Finder, Copy Path (fa5f1c2), Quick Look (476d552). Menu items have no SF Symbol icons. |
+| Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | gui/uMainForm.pas (PopUpFileMenu, AddMenuItem); gui/PlatformMenus.pas; units/PlatformShell.pas | N/A | Done | od-31j.50 | Add, Add N Selected, Show in Finder, Copy Path (fa5f1c2), Quick Look (476d552), SF Symbol icons on every menu item. |
 | Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | gui/PlatformQuickLook.pas; gui/uMainForm.pas | N/A | Done | — | 476d552: Space toggles for the selected row, arrow keys move through the visible rows, centred on the window. |
 | Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | gui/PlatformFileDrag.pas; gui/uMainForm.pas (FileDragEnded) | N/A | Done | od-31j.18.6 | Rows and segments export file URLs, copy or move outside the app (87e2000; checked by hand); when a dragged file is gone after the drop, the view refreshes (filesMovedNotification). |
 | Display limits: 100 children below the root, hide < 1 KiB | DiskAnalyzer.swift:7-8, 344-368 | gui/uMainForm.pas:717-729 (shows every child > 0 bytes) | N/A | Done | od-31j.48 | a5de8ce. |
@@ -231,10 +231,10 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 81 |
-| Partial | 3 | 5 |
+| Done | 41 | 82 |
+| Partial | 3 | 4 |
 | Missing | 1 | 7 |
 | N/A | 58 | 10 |
 | Unverified | 2 | 2 |
 
-Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. It also has Quick Look and the row, segment and collector menus. Open: SF Symbol icons and keyboard hints in menus, and the Quick Look sheet for collector previews.
+Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. It also has Quick Look and the row, segment and collector menus. Open: keyboard hints in menus and the Quick Look sheet for collector previews.
