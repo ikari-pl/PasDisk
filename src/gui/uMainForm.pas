@@ -49,6 +49,7 @@ type
     FFolderBtn: TButton;
     FRefreshVolBtn: TButton;
     FVolumes: TVolumeInfoArray;
+    FVolHover: Integer;
     { Analysis chrome }
     FAnalysis: TPanel;
     FNav: TPanel;
@@ -100,6 +101,9 @@ type
       ARect: TRect; State: TOwnerDrawState);
     procedure VolListDblClick(Sender: TObject);
     procedure VolListKeyPress(Sender: TObject; var Key: Char);
+    procedure VolListMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+    procedure VolListMouseLeave(Sender: TObject);
+    procedure SetVolHover(Index: Integer);
     procedure FolderClick(Sender: TObject);
     procedure RefreshVolClick(Sender: TObject);
     procedure ListDblClick(Sender: TObject);
@@ -127,7 +131,7 @@ var
 implementation
 
 uses
-  LCLType, LCLIntf, PlatformFS;
+  LCLType, LCLIntf, PlatformFS, PlatformVolumeIcon;
 
 const
   { LCL system colors map to semantic Cocoa colors on macOS. }
@@ -277,15 +281,21 @@ begin
   FVolList.Parent := FPicker;
   FVolList.Left := 48;
   FVolList.Top := 130;
-  FVolList.Width := 520;
+  FVolList.Width := 460;
   FVolList.Height := 420;
   FVolList.Style := lbOwnerDrawFixed;
-  FVolList.ItemHeight := 64;
+  FVolList.ItemHeight := 60;
   FVolList.BorderStyle := bsNone;
   FVolList.Color := CPanel;
   FVolList.OnDrawItem := @VolListDrawItem;
+  { The accent selection shows focus, as in Swift lists; no extra
+    focus rectangle. }
+  FVolList.Options := FVolList.Options - [lboDrawFocusRect];
   FVolList.OnDblClick := @VolListDblClick;
   FVolList.OnKeyPress := @VolListKeyPress;
+  FVolList.OnMouseMove := @VolListMouseMove;
+  FVolList.OnMouseLeave := @VolListMouseLeave;
+  FVolHover := -1;
 
   FFolderBtn := TButton.Create(Self);
   FFolderBtn.Parent := FPicker;
@@ -422,6 +432,9 @@ begin
   FList.Style := lbOwnerDrawFixed;
   FList.ItemHeight := 36;
   FList.OnDrawItem := @ListDrawItem;
+  { The accent selection shows focus, as in Swift lists; no extra
+    focus rectangle. }
+  FList.Options := FList.Options - [lboDrawFocusRect];
   FList.OnMouseMove := @ListMouseMove;
   FList.OnMouseLeave := @ListMouseLeave;
   FList.OnDblClick := @ListDblClick;
@@ -512,6 +525,7 @@ procedure TMainForm.RefreshVolumes;
 var
   I: Integer;
 begin
+  ClearVolumeIconCache;
   FVolumes := ListVolumes;
   FVolList.Items.BeginUpdate;
   try
@@ -529,85 +543,122 @@ end;
 procedure TMainForm.VolListDrawItem(Control: TWinControl; Index: Integer;
   ARect: TRect; State: TOwnerDrawState);
 var
+  RowInk, RowBg: TColor;
   LB: TListBox;
   Vol: TVolumeInfo;
   UsedFrac: Double;
   Bar, Fill: TRect;
-  Used, Line2: string;
+  Used, Total: string;
   Selected: Boolean;
+  SelectedTrack: TColor;
 begin
   LB := Control as TListBox;
   if (Index < 0) or (Index > High(FVolumes)) then
     Exit;
   Vol := FVolumes[Index];
   Selected := odSelected in State;
-
+  LB.Canvas.Brush.Color := ColorToRGB(CPanel);
   LB.Canvas.Brush.Style := bsSolid;
-  if Selected then
-   begin
-      LB.Canvas.Brush.Color := ColorToRGB(clHighlight);
-      LB.Canvas.Font.Color := ColorToRGB(clHighlightText);
-   end
-   else
-      LB.Canvas.Brush.Color := ColorToRGB(CPanel);
-   LB.Canvas.FillRect(ARect);
-
-  { left accent }
-  if not Selected then
+  LB.Canvas.FillRect(ARect);
+  { DevicePickerView rows: accent background when selected, a faint wash
+    on hover (as in the folder rows). }
+  if Selected or (Index = FVolHover) then
   begin
-    LB.Canvas.Brush.Color := ColorToRGB(CAccent);
-    LB.Canvas.FillRect(Rect(ARect.Left, ARect.Top + 10, ARect.Left + 3, ARect.Bottom - 10));
+    if Selected then
+      LB.Canvas.Brush.Color := ColorToRGB(clHighlight)
+    else
+    begin
+      RowInk := SecondaryTextColor(CPanel);
+      RowBg := ColorToRGB(CPanel);
+      LB.Canvas.Brush.Color := RGBToColor(
+        (Red(RowInk) + 7 * Red(RowBg)) div 8,
+        (Green(RowInk) + 7 * Green(RowBg)) div 8,
+        (Blue(RowInk) + 7 * Blue(RowBg)) div 8);
+    end;
+    LB.Canvas.Pen.Style := psClear;
+    LB.Canvas.RoundRect(ARect.Left + 2, ARect.Top + 2, ARect.Right - 2,
+      ARect.Bottom - 2, 8, 8);
+    LB.Canvas.Pen.Style := psSolid;
   end;
 
-  { Text draws transparently over the row background; leaving the accent
-    brush active paints it behind the text on Cocoa. }
-  if Selected then
-    LB.Canvas.Brush.Color := ColorToRGB(clHighlight)
-  else
-    LB.Canvas.Brush.Color := ColorToRGB(CPanel);
+  DrawVolumeIcon(LB.Canvas, Rect(ARect.Left + 8, ARect.Top + 10,
+    ARect.Left + 44, ARect.Top + 46), Vol.Path);
   LB.Canvas.Brush.Style := bsClear;
-   if not Selected then
-      LB.Canvas.Font.Color := ColorToRGB(CInk);
+  if Selected then
+    LB.Canvas.Font.Color := ColorToRGB(clHighlightText)
+  else
+    LB.Canvas.Font.Color := ColorToRGB(CInk);
   LB.Canvas.Font.Size := 13;
   LB.Canvas.Font.Style := [fsBold];
-  LB.Canvas.TextOut(ARect.Left + 16, ARect.Top + 10, Vol.Name);
+  LB.Canvas.TextOut(ARect.Left + 56, ARect.Top + 8, Vol.Name);
 
   if Vol.TotalBytes > 0 then
   begin
-    Used := FormatFileSize(Int64(Vol.TotalBytes - Vol.AvailableBytes)) + ' used · ' +
-      FormatFileSize(Int64(Vol.AvailableBytes)) + ' available';
-    Line2 := Vol.Path + '  ·  ' + Used;
-  end
-  else
-    Line2 := Vol.Path;
-
-  LB.Canvas.Font.Size := 10;
-  LB.Canvas.Font.Style := [];
-  if Selected then
-     LB.Canvas.Font.Color := ColorToRGB(clHighlightText)
-   else
-     LB.Canvas.Font.Color := SecondaryTextColor(CPanel);
-  LB.Canvas.Brush.Style := bsClear;
-  LB.Canvas.TextOut(ARect.Left + 16, ARect.Top + 32, Line2);
-
-  if Vol.TotalBytes > 0 then
-  begin
+    Used := FormatFileSize(Int64(Vol.TotalBytes - Vol.AvailableBytes));
+    Total := FormatFileSize(Int64(Vol.TotalBytes));
+    if Selected then
+      LB.Canvas.Font.Color := SecondaryTextColor(clHighlight, clHighlightText)
+    else
+      LB.Canvas.Font.Color := SecondaryTextColor(CPanel);
+    LB.Canvas.Font.Size := 10;
+    LB.Canvas.Font.Style := [];
+    LB.Canvas.TextOut(ARect.Left + 56, ARect.Top + 28, Used + ' / ' + Total);
     UsedFrac := Double(Vol.TotalBytes - Vol.AvailableBytes) / Double(Vol.TotalBytes);
     if UsedFrac < 0 then UsedFrac := 0;
     if UsedFrac > 1 then UsedFrac := 1;
-    Bar := Rect(ARect.Right - 140, ARect.Top + 28, ARect.Right - 16, ARect.Top + 36);
+    Bar := Rect(ARect.Left + 56, ARect.Top + 45, ARect.Left + 180, ARect.Top + 51);
+    { StorageProgressBar: no outline, fully rounded ends. }
     LB.Canvas.Brush.Style := bsSolid;
-    LB.Canvas.Brush.Color := ColorToRGB(CBarTrack);
-    LB.Canvas.FillRect(Bar);
+    LB.Canvas.Pen.Style := psClear;
+    if Selected then
+    begin
+      SelectedTrack := RGBToColor(
+        (Red(ColorToRGB(clHighlightText)) + Red(ColorToRGB(clHighlight))) div 2,
+        (Green(ColorToRGB(clHighlightText)) + Green(ColorToRGB(clHighlight))) div 2,
+        (Blue(ColorToRGB(clHighlightText)) + Blue(ColorToRGB(clHighlight))) div 2);
+      LB.Canvas.Brush.Color := SelectedTrack;
+    end
+    else
+      LB.Canvas.Brush.Color := ColorToRGB(CBarTrack);
+    LB.Canvas.RoundRect(Bar.Left, Bar.Top, Bar.Right, Bar.Bottom, 6, 6);
     Fill := Bar;
-    Fill.Right := Bar.Left + Round((Bar.Right - Bar.Left) * UsedFrac);
+    Fill.Right := Fill.Left + Round((Fill.Right - Fill.Left) * UsedFrac);
     if Selected then
       LB.Canvas.Brush.Color := ColorToRGB(clHighlightText)
     else
       LB.Canvas.Brush.Color := ColorToRGB(CBarFill);
     if Fill.Right > Fill.Left then
-      LB.Canvas.FillRect(Fill);
+      LB.Canvas.RoundRect(Fill.Left, Fill.Top, Fill.Right, Fill.Bottom, 6, 6);
+    LB.Canvas.Pen.Style := psSolid;
   end;
+  LB.Canvas.Pen.Color := ColorToRGB(SecondaryTextColor(CPanel));
+  LB.Canvas.MoveTo(ARect.Right - 18, ARect.Top + 26);
+  LB.Canvas.LineTo(ARect.Right - 14, ARect.Top + 30);
+  LB.Canvas.LineTo(ARect.Right - 18, ARect.Top + 34);
+  if Index < LB.Items.Count - 1 then
+  begin
+    LB.Canvas.Pen.Color := ColorToRGB(SecondaryTextColor(CPanel));
+    LB.Canvas.Line(ARect.Left, ARect.Bottom - 1, ARect.Right, ARect.Bottom - 1);
+  end;
+end;
+
+procedure TMainForm.SetVolHover(Index: Integer);
+begin
+  if FVolHover <> Index then
+  begin
+    FVolHover := Index;
+    FVolList.Invalidate;
+  end;
+end;
+
+procedure TMainForm.VolListMouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+begin
+  SetVolHover(FVolList.ItemAtPos(Point(X, Y), True));
+end;
+
+procedure TMainForm.VolListMouseLeave(Sender: TObject);
+begin
+  SetVolHover(-1);
 end;
 
 procedure TMainForm.VolListDblClick(Sender: TObject);

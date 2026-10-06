@@ -14,14 +14,22 @@ uses
   wherever a colour is resolved or drawn on a canvas: ColorToRGB(clGrayText)
   is black on the Cocoa widgetset. Recompute it after appearance changes. }
 function SecondaryTextColor(Background: TColor): TColor;
+{ The same blend for text in another colour, e.g. clHighlightText on a
+  selected row's clHighlight. }
+function SecondaryTextColor(Background, Ink: TColor): TColor;
 
 implementation
 
 function SecondaryTextColor(Background: TColor): TColor;
-var
-  Ink, Bg: TColor;
 begin
-  Ink := ColorToRGB(clWindowText);
+  Result := SecondaryTextColor(Background, clWindowText);
+end;
+
+function SecondaryTextColor(Background, Ink: TColor): TColor;
+var
+  Bg: TColor;
+begin
+  Ink := ColorToRGB(Ink);
   Bg := ColorToRGB(Background);
   Result := RGBToColor(
     (Red(Ink) * 55 + Red(Bg) * 45) div 100,

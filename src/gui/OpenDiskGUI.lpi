@@ -40,6 +40,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="PlatformVolumeIcon.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="GuiColors.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
