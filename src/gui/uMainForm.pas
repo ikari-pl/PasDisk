@@ -13,7 +13,7 @@ uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, ExtCtrls,
   StdCtrls, ComCtrls, Buttons, RingsChart, FileTree, Traversal,
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformAppearance,
-  GuiColors, BreadcrumbBar, TextTrim;
+  GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -24,7 +24,8 @@ type
     FTree: TFileTree;
     FBytes: Int64;
     FItems: Integer;
-    FError: string;
+  FError: string;
+    FUnreadable: Integer;
   protected
     procedure Execute; override;
   public
@@ -32,6 +33,7 @@ type
     { Valid only after WaitFor. }
     property Tree: TFileTree read FTree;
     property Error: string read FError;
+    property Unreadable: Integer read FUnreadable;
     { Progress counters, written by the scan thread and read by the UI. }
     function Bytes: Int64;
     function Items: Integer;
@@ -47,7 +49,11 @@ type
     FPickerSub: TLabel;
     FVolList: TListBox;
     FFolderBtn: TButton;
-    FRefreshVolBtn: TButton;
+  FRefreshVolBtn: TButton;
+    FPickerState: TEmptyStateView;
+    { Replaces the list and chart: FDA required, unreadable, empty. }
+    FAnalysisState: TEmptyStateView;
+    FNeedsFullDiskAccess: Boolean;
     FVolumes: TVolumeInfoArray;
     FVolHover: Integer;
     { Analysis chrome }
@@ -121,6 +127,13 @@ type
     procedure FormDestroy(Sender: TObject);
     procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure FormResize(Sender: TObject);
+    procedure FormActivate(Sender: TObject);
+    procedure OpenFDA(Sender: TObject);
+    procedure RelaunchForFDA(Sender: TObject);
+    procedure RescanState(Sender: TObject);
+    procedure ShowAnalysisState(const Symbol, Title, Description: string;
+      const Captions: array of string; const Handlers: array of TNotifyEvent);
+    procedure HideAnalysisState;
   public
     constructor Create(AOwner: TComponent); override;
   end;
@@ -131,7 +144,8 @@ var
 implementation
 
 uses
-  LCLType, LCLIntf, PlatformFS, PlatformVolumeIcon;
+  LCLType, LCLIntf, PlatformFS, PlatformImages, PlatformFullDiskAccess,
+  PlatformShell;
 
 const
   { LCL system colors map to semantic Cocoa colors on macOS. }
@@ -162,6 +176,7 @@ begin
   FTree := nil;
   FBytes := 0;
   FItems := 0;
+  FUnreadable := 0;
 end;
 
 procedure TScanThread.SetProgress(ABytes: Int64; AItems: Integer);
@@ -196,10 +211,11 @@ begin
   ActiveScanThread := Self;
   try
     try
-      { ScanEngine.swift: full scans include the Data volume behind the
-        firmlinks; a cancelled scan's partial tree is discarded. }
-      FTree := ScanPath(FPath, @ScanProgressThunk,
-        SubtreeAllowedDevices(FPath), @ScanCancelledThunk);
+      { ScanEngine.swift performScan: '/' is the whole boot volume group,
+        other paths include the Data volume behind the firmlinks (and its
+        alias); a cancelled scan's partial tree is discarded. }
+      FTree := ScanForAnalysis(FPath, @ScanProgressThunk,
+        @ScanCancelledThunk, @FUnreadable);
       if Terminated then
         FreeAndNil(FTree);
     except
@@ -224,6 +240,7 @@ begin
   OnDestroy := @FormDestroy;
   OnKeyDown := @FormKeyDown;
   OnResize := @FormResize;
+  OnActivate := @FormActivate;
   FCollector := TCollector.Create;
   FBreadcrumbs := TStringList.Create;
   FTree := nil;
@@ -297,6 +314,14 @@ begin
   FVolList.OnMouseLeave := @VolListMouseLeave;
   FVolHover := -1;
 
+  { DevicePickerView: ContentUnavailableView in place of the rows. }
+  FPickerState := TEmptyStateView.Create(Self);
+  FPickerState.Parent := FPicker;
+  FPickerState.Color := CPanel;
+  FPickerState.Visible := False;
+  FPickerState.SetState('externaldrive.badge.questionmark', 'No Disks Found',
+    'Connected volumes appear here automatically', [], []);
+
   FFolderBtn := TButton.Create(Self);
   FFolderBtn.Parent := FPicker;
   FFolderBtn.Caption := 'Scan Folder…';
@@ -309,11 +334,12 @@ begin
   FRefreshVolBtn := TButton.Create(Self);
   FRefreshVolBtn.Parent := FPicker;
   FRefreshVolBtn.Caption := 'Refresh';
-  FRefreshVolBtn.Left := 200;
+  FRefreshVolBtn.Left := FFolderBtn.Left + FFolderBtn.Width + 8;
   FRefreshVolBtn.Top := 570;
   FRefreshVolBtn.Width := 100;
   FRefreshVolBtn.Height := 32;
   FRefreshVolBtn.OnClick := @RefreshVolClick;
+
 
   { --- Analysis --- }
   FAnalysis := TPanel.Create(Self);
@@ -451,6 +477,15 @@ begin
   FChart.Parent := FChartPanel;
   FChart.Align := alClient;
   FChart.OnSelect := @ChartSelect;
+
+  { DiskAnalysisView emptyStateView: covers the list and the chart. }
+  FAnalysisState := TEmptyStateView.Create(Self);
+  FAnalysisState.Parent := FBody;
+  { Over the list as well as the chart, like Swift's emptyStateView. }
+  FAnalysisState.SetBounds(0, 0, FBody.ClientWidth, FBody.ClientHeight);
+  FAnalysisState.Anchors := [akLeft, akTop, akRight, akBottom];
+  FAnalysisState.Color := CBg;
+  FAnalysisState.Visible := False;
 end;
 
 procedure TMainForm.ApplyTheme;
@@ -460,6 +495,8 @@ begin
   FAnalysis.Color := CBg;
   FBody.Color := CBg;
   FChartPanel.Color := CBg;
+  FAnalysisState.Color := CBg;
+  FPickerState.Color := CPanel;
   FNav.Color := CPanel;
   FListPanel.Color := CPanel;
   FVolList.Color := CPanel;
@@ -498,8 +535,45 @@ begin
   FDeleteButton.Left := Max(200, Width - FDeleteButton.Width - 24);
   FVolList.Width := Min(560, Max(420, Width - 96));
   FVolList.Height := Max(200, Height - 260);
-  FFolderBtn.Top := FVolList.Top + FVolList.Height + 20;
+  FFolderBtn.Top := FVolList.Top + FVolList.Height + 12;
   FRefreshVolBtn.Top := FFolderBtn.Top;
+  FPickerState.BoundsRect := FVolList.BoundsRect;
+end;
+
+procedure TMainForm.FormActivate(Sender: TObject);
+begin
+  { DiskAnalysisView: retry when the app comes back from System Settings. }
+  if (FMode = umAnalysis) and FNeedsFullDiskAccess then
+    StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
+end;
+
+procedure TMainForm.ShowAnalysisState(const Symbol, Title, Description: string;
+  const Captions: array of string; const Handlers: array of TNotifyEvent);
+begin
+  FAnalysisState.SetState(Symbol, Title, Description, Captions, Handlers);
+  FAnalysisState.Visible := True;
+  FAnalysisState.BringToFront;
+end;
+
+procedure TMainForm.HideAnalysisState;
+begin
+  FAnalysisState.Visible := False;
+  FNeedsFullDiskAccess := False;
+end;
+
+procedure TMainForm.OpenFDA(Sender: TObject);
+begin
+  OpenFullDiskAccessSettings;
+end;
+
+procedure TMainForm.RelaunchForFDA(Sender: TObject);
+begin
+  if LaunchNewInstance then Application.Terminate;
+end;
+
+procedure TMainForm.RescanState(Sender: TObject);
+begin
+  StartScan(FRootPath, FRootName, FRootTotal, FRootFree);
 end;
 
 procedure TMainForm.ShowPicker;
@@ -518,6 +592,7 @@ begin
   FPicker.Visible := False;
   FAnalysis.Visible := True;
   FAnalysis.BringToFront;
+  HideAnalysisState;
   StyleChrome;
 end;
 
@@ -527,6 +602,9 @@ var
 begin
   ClearVolumeIconCache;
   FVolumes := ListVolumes;
+  { Screenshots: OPENDISK_GUI_NO_VOLUMES=1 shows the empty picker. }
+  if GetEnvironmentVariable('OPENDISK_GUI_NO_VOLUMES') = '1' then
+    FVolumes := nil;
   FVolList.Items.BeginUpdate;
   try
     FVolList.Clear;
@@ -535,6 +613,10 @@ begin
   finally
     FVolList.Items.EndUpdate;
   end;
+  FPickerState.BoundsRect := FVolList.BoundsRect;
+  FPickerState.Visible := FVolList.Items.Count = 0;
+  if FPickerState.Visible then
+    FPickerState.BringToFront;
   if FVolList.Items.Count > 0 then
     FVolList.ItemIndex := 0;
   FStatus.SimpleText := Format('%d volume(s)', [Length(FVolumes)]);
@@ -729,7 +811,26 @@ var
   Expanded: string;
 begin
   Expanded := ResolvePath(APath);
-  if not DirectoryExists(Expanded) then
+  if (IncludeTrailingPathDelimiter(Expanded) = PathDelim) and
+    (not FullDiskAccessGranted) then
+  begin
+    FRootPath := Expanded;
+    FRootName := AName;
+    FRootTotal := Total;
+    FRootFree := FreeBytes;
+    ShowAnalysis;
+    FreeAndNil(FTree);
+    FChart.Root := nil;
+    FList.Clear;
+    ShowAnalysisState('exclamationmark.shield', 'Full Disk Access Required',
+      'OpenDisk needs Full Disk Access to analyze your entire system. Turn it ' +
+      'on in System Settings, then quit and reopen OpenDisk. macOS only ' +
+      'applies the change to a freshly launched app.',
+      ['Open System Settings', 'Quit && Reopen'], [@OpenFDA, @RelaunchForFDA]);
+    FNeedsFullDiskAccess := True;
+    Exit;
+  end;
+  if not DirectoryExists(ResolveDataVolumeAlias(Expanded)) then
   begin
     MessageDlg('Not a directory:' + LineEnding + Expanded, mtError, [mbOK], 0);
     Exit;
@@ -800,8 +901,6 @@ begin
     if Thread.Error <> '' then
     begin
       FStatus.SimpleText := 'Scan failed: ' + Thread.Error;
-      FMode := umPicker;
-      ShowPicker;
       Exit;
     end;
     FTree := Thread.Tree;
@@ -815,6 +914,13 @@ begin
     FStatus.SimpleText := Format('%s · %d items%s',
       [FormatFileSize(FTree.SizeOf(RootID)), FTree.NodeCount - 1, Cap]);
     ShowNode(FRootPath);
+    if (Thread.Unreadable > 0) and (FTree.NodeCount <= 1) then
+      ShowAnalysisState('lock.slash', 'Couldn''t Read This Location',
+        'macOS denied access to this location. Check its permissions, or ' +
+        'remove and re-grant it, then rescan.', ['Rescan'], [@RescanState])
+    else if FTree.NodeCount <= 1 then
+      ShowAnalysisState('folder', 'Nothing to Show',
+        'This folder is empty, or nothing in it was large enough to scan.', [], []);
     { Automation: OPENDISK_GUI_SHOW=<folder inside the scan> opens it. }
     ShowPath := GetEnvironmentVariable('OPENDISK_GUI_SHOW');
     if ShowPath <> '' then

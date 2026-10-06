@@ -10,19 +10,63 @@ interface
   platform has no such hook or the launch failed. }
 function OpenDocument(const Path: string): Boolean;
 
+{ Opens a URL (e.g. x-apple.systempreferences:) with its handler. }
+function OpenURL(const URL: string): Boolean;
+
+{ Starts a new instance of this application (the .app bundle when running
+  from one, else the executable). The caller then quits. }
+function LaunchNewInstance: Boolean;
+
 implementation
 
 uses
   SysUtils;
 
-function OpenDocument(const Path: string): Boolean;
+{$IFDEF DARWIN}
+{ Arguments as an array: a single command line would be split on spaces. }
+function RunOpen(const Args: array of string): Boolean;
 begin
-  {$IFDEF DARWIN}
   try
-    Result := ExecuteProcess('/usr/bin/open', Path) = 0;
+    Result := ExecuteProcess('/usr/bin/open', Args) = 0;
   except
     Result := False;
   end;
+end;
+{$ENDIF}
+
+function OpenDocument(const Path: string): Boolean;
+begin
+  {$IFDEF DARWIN}
+  Result := RunOpen([Path]);
+  {$ELSE}
+  Result := False;
+  {$ENDIF}
+end;
+
+function OpenURL(const URL: string): Boolean;
+begin
+  {$IFDEF DARWIN}
+  Result := RunOpen([URL]);
+  {$ELSE}
+  Result := False;
+  {$ENDIF}
+end;
+
+function LaunchNewInstance: Boolean;
+{$IFDEF DARWIN}
+var
+  Exe: string;
+  P: Integer;
+{$ENDIF}
+begin
+  {$IFDEF DARWIN}
+  Exe := ParamStr(0);
+  P := Pos('.app/Contents/MacOS/', Exe);
+  if P > 0 then
+    { FullDiskAccess.relaunch: createsNewApplicationInstance. }
+    Result := RunOpen(['-n', Copy(Exe, 1, P + 3)])
+  else
+    Result := RunOpen(['-n', '-a', Exe]);
   {$ELSE}
   Result := False;
   {$ENDIF}

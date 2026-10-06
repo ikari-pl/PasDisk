@@ -44,7 +44,11 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
-        <Filename Value="PlatformVolumeIcon.pas"/>
+        <Filename Value="PlatformImages.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
+        <Filename Value="EmptyStateView.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>

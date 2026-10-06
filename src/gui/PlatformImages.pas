@@ -1,13 +1,14 @@
-{ PlatformVolumeIcon — the system icon of a volume or folder.
+{ PlatformImages — system artwork: volume and folder icons, SF Symbols.
 
   Darwin: NSWorkspace iconForFile: (DeviceRow.swift shows this icon at
-  36 x 36), reached through the Objective-C runtime rather than the Cocoa
-  units, which trip an FPC 3.2.2 internal error in this unit. The icon is
-  rendered once per path at twice the drawn size into an LCL bitmap with
-  alpha, so Retina displays get full detail. Elsewhere, or if the lookup
-  fails: a neutral rounded placeholder. }
+  36 x 36) and NSImage imageWithSystemSymbolName: (the symbols SwiftUI's
+  Label / ContentUnavailableView use), reached through the Objective-C
+  runtime rather than the Cocoa units, which trip an FPC 3.2.2 internal
+  error here. Images are rendered at twice the drawn size into LCL bitmaps
+  with alpha, so Retina displays get full detail. Elsewhere, or if a lookup
+  fails: a neutral placeholder, or no symbol. }
 
-unit PlatformVolumeIcon;
+unit PlatformImages;
 
 {$mode objfpc}{$H+}
 
@@ -21,6 +22,10 @@ procedure DrawVolumeIcon(ACanvas: TCanvas; const Bounds: TRect; const Path: stri
 { Forget cached icons (call when the volume list is rebuilt, so unmounted
   volumes and failed lookups do not accumulate). }
 procedure ClearVolumeIconCache;
+
+{ SF Symbol Name (e.g. 'lock.slash') as a Px x Px bitmap in Color, the
+  symbol fitted and centred; nil when unavailable. Caller owns it. }
+function SystemSymbolBitmap(const Name: string; Px: Integer; Color: TColor): TBitmap;
 
 implementation
 
@@ -50,22 +55,32 @@ function sel_registerName(Name: PAnsiChar): Pointer; cdecl; external 'objc';
 type
   TMsgObj = function(Self, Op: Pointer): Pointer; cdecl;
   TMsgObjArg = function(Self, Op, Arg: Pointer): Pointer; cdecl;
+  TMsgObjArg2 = function(Self, Op, Arg1, Arg2: Pointer): Pointer; cdecl;
   TMsgCGImage = function(Self, Op: Pointer; ProposedRect: CGRectPtr;
     Context, Hints: Pointer): CGImageRef; cdecl;
 
-{ NSWorkspace icon for Path rendered at Px x Px, or nil. }
-function LoadIcon(const Path: string; Px: Integer): TBitmap;
+function CFStr(const S: string): CFStringRef;
+begin
+  Result := CFStringCreateWithCString(nil, PChar(S), kCFStringEncodingUTF8);
+end;
+
+{ An NSImage rendered into a Px x Px bitmap, fitted and centred. With
+  Tint, every pixel takes Tint's colour and keeps its coverage (template
+  images such as SF Symbols are black shapes on transparency). }
+function NSImageToBitmap(Image: Pointer; Px: Integer; Tinted: Boolean;
+  Tint: TColor): TBitmap;
 var
-  Workspace, Image, PathStr: Pointer;
-  Proposed: CGRect;
+  Proposed, Dest: CGRect;
   Source: CGImageRef;
   Space: CGColorSpaceRef;
   Ctx: CGContextRef;
   Buf: array of Byte;
   Intf: TLazIntfImage;
   X, Y, I: Integer;
+  W, H, Scale: Double;
   Alpha: Byte;
   Col: TFPColor;
+  RGB: TColor;
 
   function Unpremultiply(C: Byte): Word;
   begin
@@ -77,20 +92,6 @@ var
 
 begin
   Result := nil;
-  Workspace := TMsgObj(@objc_msgSend)(objc_getClass('NSWorkspace'),
-    sel_registerName('sharedWorkspace'));
-  if Workspace = nil then
-    Exit;
-  { CFString is toll-free bridged with NSString. }
-  PathStr := CFStringCreateWithCString(nil, PChar(Path), kCFStringEncodingUTF8);
-  if PathStr = nil then
-    Exit;
-  try
-    Image := TMsgObjArg(@objc_msgSend)(Workspace,
-      sel_registerName('iconForFile:'), PathStr);
-  finally
-    CFRelease(PathStr);
-  end;
   if Image = nil then
     Exit;
   Proposed := CGRectMake(0, 0, Px, Px);
@@ -98,6 +99,12 @@ begin
     sel_registerName('CGImageForProposedRect:context:hints:'), @Proposed, nil, nil);
   if Source = nil then
     Exit;
+  W := CGImageGetWidth(Source);
+  H := CGImageGetHeight(Source);
+  if (W <= 0) or (H <= 0) then
+    Exit;
+  Scale := Min(Px / W, Px / H);
+  Dest := CGRectMake((Px - W * Scale) / 2, (Px - H * Scale) / 2, W * Scale, H * Scale);
   SetLength(Buf, Px * Px * 4);
   FillChar(Buf[0], Length(Buf), 0);
   Space := CGColorSpaceCreateDeviceRGB;
@@ -107,8 +114,9 @@ begin
   if Ctx = nil then
     Exit;
   CGContextSetInterpolationQuality(Ctx, kCGInterpolationHigh);
-  CGContextDrawImage(Ctx, CGRectMake(0, 0, Px, Px), Source);
+  CGContextDrawImage(Ctx, Dest, Source);
   CGContextRelease(Ctx);
+  RGB := ColorToRGB(Tint);
   { Row 0 of a bitmap context's memory is the top of the image. }
   Intf := TLazIntfImage.Create(Px, Px, [riqfRGB, riqfAlpha]);
   try
@@ -117,9 +125,18 @@ begin
       begin
         I := (Y * Px + X) * 4;
         Alpha := Buf[I + 3];
-        Col.Red := Unpremultiply(Buf[I]);
-        Col.Green := Unpremultiply(Buf[I + 1]);
-        Col.Blue := Unpremultiply(Buf[I + 2]);
+        if Tinted then
+        begin
+          Col.Red := Word(Red(RGB)) * 257;
+          Col.Green := Word(Green(RGB)) * 257;
+          Col.Blue := Word(Blue(RGB)) * 257;
+        end
+        else
+        begin
+          Col.Red := Unpremultiply(Buf[I]);
+          Col.Green := Unpremultiply(Buf[I + 1]);
+          Col.Blue := Unpremultiply(Buf[I + 2]);
+        end;
         Col.Alpha := Word(Alpha) * 257;
         Intf.Colors[X, Y] := Col;
       end;
@@ -128,6 +145,53 @@ begin
   finally
     Intf.Free;
   end;
+end;
+
+{ NSWorkspace icon for Path rendered at Px x Px, or nil. }
+function LoadIcon(const Path: string; Px: Integer): TBitmap;
+var
+  Workspace, Image, PathStr: Pointer;
+begin
+  Result := nil;
+  Workspace := TMsgObj(@objc_msgSend)(objc_getClass('NSWorkspace'),
+    sel_registerName('sharedWorkspace'));
+  if Workspace = nil then
+    Exit;
+  { CFString is toll-free bridged with NSString. }
+  PathStr := CFStr(Path);
+  if PathStr = nil then
+    Exit;
+  try
+    Image := TMsgObjArg(@objc_msgSend)(Workspace,
+      sel_registerName('iconForFile:'), PathStr);
+  finally
+    CFRelease(PathStr);
+  end;
+  Result := NSImageToBitmap(Image, Px, False, clNone);
+end;
+
+function SystemSymbolBitmap(const Name: string; Px: Integer; Color: TColor): TBitmap;
+var
+  NameStr, Image: Pointer;
+begin
+  Result := nil;
+  NameStr := CFStr(Name);
+  if NameStr = nil then
+    Exit;
+  try
+    { macOS 11+; nil for unknown names. }
+    Image := TMsgObjArg2(@objc_msgSend)(objc_getClass('NSImage'),
+      sel_registerName('imageWithSystemSymbolName:accessibilityDescription:'),
+      NameStr, nil);
+  finally
+    CFRelease(NameStr);
+  end;
+  Result := NSImageToBitmap(Image, Px, True, Color);
+end;
+{$ELSE}
+function SystemSymbolBitmap(const Name: string; Px: Integer; Color: TColor): TBitmap;
+begin
+  Result := nil;
 end;
 {$ENDIF}
 
