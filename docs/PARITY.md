@@ -145,7 +145,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Status bar capacity readout (bar + "X available of Y", purgeable tooltip, a11y) | ScanStatusBar.swift:60-112; DiskAnalysisView.swift:134-137, 489-494 | gui/uMainForm.pas:650-653 (text "volume used / total") | N/A | Done | od-31j.18.7 | Bar, text and hint (5ae2396); VoiceOver gets the status text, "Disk space" with "<used> used, <available> available of <total>", and the totals (ScanStatusBar.UpdateAccessibility). |
 | Semantic system colors (light/dark) | Swift uses system materials throughout | gui/uMainForm.pas, RingsChart.pas, GuiColors.pas, PlatformAppearance.pas | N/A | Done | od-31j.18.10 | d2ba636. Dark mode judged from source (host in Light). |
 | Typography/spacing tokens | SwiftUI styles in the referenced views; CLAUDE.md spacing scale | gui/DesignTokens.pas; listed GUI units | N/A | Done | od-31j.18.8 | c188a17. Sizes measured from NSFont.preferredFont(forTextStyle:) on macOS. |
-| Restrained motion (hover fades, collector drawer, chart transition) | CollectorBar.swift:89-95; ScanResultsView.swift:29 | — | N/A | Missing | od-31j.18.15 | |
+| Restrained motion (hover fades, collector drawer, chart transition) | CollectorBar.swift:89-95; ScanResultsView.swift:29 | units/Motion.pas; gui/PlatformMotion.pas; gui/uMainForm.pas; gui/CollectorBarView.pas | N/A | Partial | od-31j.18.15 | Hover fades on folder and collector rows (0.15 s), collector list/notice fade + slide (spring 0.3 s), drag tint fades (0.15 s), display-linked clock that stops at rest, Reduce Motion (fcc657c and the collector-row fades). Open: .numericText() digit rolls and the list-update animation (ScanResultsView .snappy 0.18). Swift has no chart transition. |
 | Thread-safe scan state handoff | DiskAnalyzer.swift:99-103 (MainActor hop) | gui/uMainForm.pas:126-170, 611-626 | N/A | Done | od-31j.38 | 2115090. |
 | Byte formatting (`ByteCountFormatter` `.file` = decimal; GB/TB no fraction on devices) | Utilities/Formatters.swift:4-31 | units/Formatters.pas; units/PlatformLocale.pas | Done | Done | od-31j.40 | b2e9e18: matches 360 values from the real ByteCountFormatter (en_US, en_PL), locale separators. |
 
@@ -232,8 +232,8 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 | Status | Engine/CLI | GUI |
 |---|---|---|
 | Done | 42 | 90 |
-| Partial | 2 | 0 |
-| Missing | 1 | 4 |
+| Partial | 2 | 1 |
+| Missing | 1 | 3 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 

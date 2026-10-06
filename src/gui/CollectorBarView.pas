@@ -57,8 +57,15 @@ type
       0 gone; FRestTop is where it sits when shown. }
     FShown: TAnimatedValue;
     FRestTop: Integer;
+    { .hoverHighlight(cornerRadius: 6): rows fade their wash (0.15 s). }
+    FHoverRows: array of Integer;
+    FHoverFades: array of TAnimatedValue;
     { ScrollView offset: the list scrolls once its rows outgrow the panel. }
     FScroll: Integer;
+    procedure SetHover(Row: Integer);
+    function HoverAmount(Row: Integer; NowMs: QWord): Double;
+    function HoverMoving(NowMs: QWord): Boolean;
+    procedure PruneHover(NowMs: QWord);
     function MaxScroll: Integer;
     function RowAt(Y: Integer): Integer;
   protected
@@ -108,6 +115,7 @@ type
     procedure HideOverlay(O: TCollectorOverlay);
     procedure PlaceOverlay(O: TCollectorOverlay; NowMs: QWord);
     procedure MotionFrame(Sender: TObject);
+    procedure StartMotion;
     procedure CollapseTick(Sender: TObject);
     procedure NoticeTick(Sender: TObject);
     procedure SpinTick(Sender: TObject);
@@ -206,6 +214,7 @@ var
   Secondary: TColor;
   SizeText, RowName: string;
   Keep: Integer;
+  Amount: Double;
 begin
   C := Canvas;
   C.Brush.Style := bsSolid;
@@ -243,11 +252,12 @@ begin
       Inc(Y, RowHeight);
       Continue;
     end;
-    if I = FHover then
+    Amount := HoverAmount(I, GetTickCount64);
+    if Amount > 0.01 then
     begin
-      { .hoverHighlight(cornerRadius: 6) }
+      { .hoverHighlight(cornerRadius: 6), faded in and out. }
       C.Brush.Style := bsSolid;
-      C.Brush.Color := Blend(FBar.PanelColor, clWindowText, 0.08);
+      C.Brush.Color := Blend(FBar.PanelColor, clWindowText, 0.08 * Amount);
       C.Pen.Style := psClear;
       C.RoundRect(Panel.Left + 6, Y, Panel.Right - 6, Y + RowHeight, 12, 12);
       C.Pen.Style := psSolid;
@@ -319,7 +329,11 @@ begin
   if NewScroll <> FScroll then
   begin
     FScroll := NewScroll;
-    FHover := RowAt(ScreenToClient(Mouse.CursorPos).Y);
+    { Rows moved under the pointer: no fade carries over. }
+    FHoverRows := nil;
+    FHoverFades := nil;
+    FHover := -1;
+    SetHover(RowAt(ScreenToClient(Mouse.CursorPos).Y));
     Invalidate;
   end;
 end;
@@ -364,12 +378,7 @@ begin
     Exit;
   end;
   FBar.ListHover(True);
-  H := RowAt(Y);
-  if H <> FHover then
-  begin
-    FHover := H;
-    Invalidate;
-  end;
+  SetHover(RowAt(Y));
 end;
 
 procedure TCollectorOverlay.MouseLeave;
@@ -377,9 +386,83 @@ begin
   inherited MouseLeave;
   if not FIsList then
     Exit;
-  FHover := -1;
-  Invalidate;
+  SetHover(-1);
   FBar.ListHover(False);
+end;
+
+function TCollectorOverlay.HoverAmount(Row: Integer; NowMs: QWord): Double;
+var
+  I: Integer;
+begin
+  for I := 0 to High(FHoverRows) do
+    if FHoverRows[I] = Row then
+      Exit(ValueAt(FHoverFades[I], NowMs));
+  Result := 0;
+end;
+
+function TCollectorOverlay.HoverMoving(NowMs: QWord): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to High(FHoverFades) do
+    if not AtRest(FHoverFades[I], NowMs) then
+      Exit(True);
+end;
+
+procedure TCollectorOverlay.PruneHover(NowMs: QWord);
+var
+  I, N: Integer;
+begin
+  N := 0;
+  for I := 0 to High(FHoverRows) do
+    if not AtRest(FHoverFades[I], NowMs) or (FHoverFades[I].ToValue > 0) then
+    begin
+      FHoverRows[N] := FHoverRows[I];
+      FHoverFades[N] := FHoverFades[I];
+      Inc(N);
+    end;
+  SetLength(FHoverRows, N);
+  SetLength(FHoverFades, N);
+end;
+
+procedure TCollectorOverlay.SetHover(Row: Integer);
+var
+  NowMs: QWord;
+  Duration, I: Integer;
+  Found: Boolean;
+begin
+  if Row = FHover then
+    Exit;
+  NowMs := GetTickCount64;
+  if ReduceMotion then
+    Duration := 0
+  else
+    Duration := 150;
+  for I := 0 to High(FHoverRows) do
+    if FHoverRows[I] = FHover then
+      Retarget(FHoverFades[I], 0, NowMs, Duration, eaEaseInOut);
+  FHover := Row;
+  if Row >= 0 then
+  begin
+    Found := False;
+    for I := 0 to High(FHoverRows) do
+      if FHoverRows[I] = Row then
+      begin
+        Retarget(FHoverFades[I], 1, NowMs, Duration, eaEaseInOut);
+        Found := True;
+      end;
+    if not Found then
+    begin
+      SetLength(FHoverRows, Length(FHoverRows) + 1);
+      SetLength(FHoverFades, Length(FHoverFades) + 1);
+      FHoverRows[High(FHoverRows)] := Row;
+      FHoverFades[High(FHoverFades)] := AnimatedAt(0);
+      Retarget(FHoverFades[High(FHoverFades)], 1, NowMs, Duration, eaEaseInOut);
+    end;
+  end;
+  Invalidate;
+  FBar.StartMotion;
 end;
 
 procedure TCollectorOverlay.DoContextPopup(MousePos: TPoint; var Handled: Boolean);
@@ -791,6 +874,13 @@ begin
   end;
 end;
 
+procedure TCollectorBarView.StartMotion;
+begin
+  if FMotion = nil then
+    FMotion := TFrameClock.Create(Self, @MotionFrame);
+  FMotion.Start;
+end;
+
 procedure TCollectorBarView.MotionFrame(Sender: TObject);
 var
   NowMs: QWord;
@@ -803,7 +893,14 @@ begin
   if (FList <> nil) and FList.Visible then
   begin
     PlaceOverlay(FList, NowMs);
-    Moving := not AtRest(FList.FShown, NowMs);
+    Moving := Moving or not AtRest(FList.FShown, NowMs);
+    if Length(FList.FHoverFades) > 0 then
+    begin
+      { The settling frame is drawn too; then faded-out rows are dropped. }
+      FList.Invalidate;
+      Moving := Moving or FList.HoverMoving(NowMs);
+      FList.PruneHover(NowMs);
+    end;
   end;
   if (FNoticePanel <> nil) and FNoticePanel.Visible then
   begin
