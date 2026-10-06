@@ -1,48 +1,58 @@
-{ FSEventsJournal — Darwin change journal since an FSEvents event id.
+{ PlatformChangeJournal — the change journal for this OS.
 
-  Port of OpenDisk FSEventsChangeJournal, using CFRunLoop instead of
-  DispatchQueue so we stay in plain FPC (univint FSEvents + CFRunLoop). }
+  Darwin: FSEvents history / live stream (port of OpenDisk
+  FSEventsChangeJournal.swift, using CFRunLoop instead of a DispatchQueue so
+  it stays in plain FPC). Elsewhere: no journal yet (jrUnavailable; od-31j.15
+  adds inotify / ReadDirectoryChangesW). Only JournalFactory uses this
+  unit. }
 
-unit FSEventsJournal;
+unit PlatformChangeJournal;
 
 {$mode objfpc}{$H+}
 
 interface
 
 uses
-  SysUtils, Classes;
+  ChangeJournal;
 
-type
-  TFSEventsChanges = record
-    ChangedDirectories: TStringList;
-    SubtreesToRescan: TStringList;
-    OK: Boolean;
-  end;
-
-  TJournalMode = (
-    { Replay history since the event id and finish on HistoryDone, like
-      FSEventsChangeJournal.swift; a timeout means the history is
-      incomplete and fails the collection. }
-    jmHistory,
-    { CLI watch: keep collecting live events for the whole window; the
-      window ending is success. }
-    jmLiveWindow
-  );
-
-function CurrentFSEventsID: QWord;
-{ History replay timeout: half the expected full-scan time, clamped to
-  2..30 s (ScanEngine.swift replayTimeBudget). }
-function ReplayTimeBudget(ExpectedFullScanSeconds: Double): Double;
-{ Returns OK=False when history is incomplete/unreliable or timed out.
-  Caller must Free the string lists when OK. }
-function CollectFSEventsChanges(SinceEventID: QWord; const RootPath: string;
-  TimeoutSec: Double; Mode: TJournalMode = jmHistory): TFSEventsChanges;
+function PlatformCreateChangeJournal: TChangeJournal;
 
 implementation
 
-{$IFDEF DARWIN}
 uses
-  BaseUnix, Unix, CFBase, CFArray, CFString, CFRunLoop, FSEvents, PlatformFS;
+  SysUtils, Classes
+  {$IFDEF DARWIN}, BaseUnix, Unix, CFBase, CFArray, CFString, CFRunLoop,
+  FSEvents, PlatformFS{$ENDIF};
+
+type
+  TNullChangeJournal = class(TChangeJournal)
+  public
+    function CurrentEventID: QWord; override;
+    function Collect(SinceID: QWord; const Root: string; TimeoutSec: Double;
+      Mode: TJournalMode; out Changes: TChangeSet): TJournalResult; override;
+  end;
+
+function TNullChangeJournal.CurrentEventID: QWord;
+begin
+  Result := 0;
+end;
+
+function TNullChangeJournal.Collect(SinceID: QWord; const Root: string;
+  TimeoutSec: Double; Mode: TJournalMode; out Changes: TChangeSet): TJournalResult;
+begin
+  Changes.ChangedDirectories := nil;
+  Changes.SubtreesToRescan := nil;
+  Result := jrUnavailable;
+end;
+
+{$IFDEF DARWIN}
+type
+  TFSEventsChangeJournal = class(TChangeJournal)
+  public
+    function CurrentEventID: QWord; override;
+    function Collect(SinceID: QWord; const Root: string; TimeoutSec: Double;
+      Mode: TJournalMode; out Changes: TChangeSet): TJournalResult; override;
+  end;
 
 type
   PCollector = ^TCollector;
@@ -147,13 +157,13 @@ begin
   end;
 end;
 
-function CurrentFSEventsID: QWord;
+function TFSEventsChangeJournal.CurrentEventID: QWord;
 begin
   Result := FSEventsGetCurrentEventId;
 end;
 
-function CollectFSEventsChanges(SinceEventID: QWord; const RootPath: string;
-  TimeoutSec: Double; Mode: TJournalMode): TFSEventsChanges;
+function TFSEventsChangeJournal.Collect(SinceID: QWord; const Root: string;
+  TimeoutSec: Double; Mode: TJournalMode; out Changes: TChangeSet): TJournalResult;
 var
   Collector: TCollector;
   Context: FSEventStreamContext;
@@ -164,12 +174,12 @@ var
   Latency: Double;
   RealRoot: string;
 begin
-  Result.OK := False;
-  Result.ChangedDirectories := nil;
-  Result.SubtreesToRescan := nil;
+  Result := jrIncomplete;
+  Changes.ChangedDirectories := nil;
+  Changes.SubtreesToRescan := nil;
 
   { FSEvents emits real paths (/private/tmp/…); resolve symlinks so filters match. }
-  RealRoot := ResolveRealPath(RootPath);
+  RealRoot := ResolveRealPath(Root);
 
   FillChar(Collector, SizeOf(Collector), 0);
   Collector.Changed := TStringList.Create;
@@ -198,7 +208,7 @@ begin
     @StreamCallback,
     @Context,
     Paths,
-    SinceEventID,
+    SinceID,
     Latency,
     kFSEventStreamCreateFlagUseCFTypes
   );
@@ -243,12 +253,12 @@ begin
   if Collector.Completed and (not Collector.Unreliable) and
      (DistinctCount(@Collector) <= Collector.ChangeLimit) then
   begin
-    Result.OK := True;
+    Result := jrChanges;
     { Hand back plain lists; callers reorder them (by depth). }
     Collector.Changed.Sorted := False;
     Collector.Subtrees.Sorted := False;
-    Result.ChangedDirectories := Collector.Changed;
-    Result.SubtreesToRescan := Collector.Subtrees;
+    Changes.ChangedDirectories := Collector.Changed;
+    Changes.SubtreesToRescan := Collector.Subtrees;
   end
   else
   begin
@@ -256,31 +266,15 @@ begin
     Collector.Subtrees.Free;
   end;
 end;
-
-{$ELSE}
-
-function CurrentFSEventsID: QWord;
-begin
-  Result := 0;
-end;
-
-function CollectFSEventsChanges(SinceEventID: QWord; const RootPath: string;
-  TimeoutSec: Double; Mode: TJournalMode): TFSEventsChanges;
-begin
-  Result.OK := False;
-  Result.ChangedDirectories := nil;
-  Result.SubtreesToRescan := nil;
-end;
-
 {$ENDIF}
 
-function ReplayTimeBudget(ExpectedFullScanSeconds: Double): Double;
+function PlatformCreateChangeJournal: TChangeJournal;
 begin
-  Result := ExpectedFullScanSeconds * 0.5;
-  if Result < 2 then
-    Result := 2;
-  if Result > 30 then
-    Result := 30;
+  {$IFDEF DARWIN}
+  Result := TFSEventsChangeJournal.Create;
+  {$ELSE}
+  Result := TNullChangeJournal.Create;
+  {$ENDIF}
 end;
 
 end.

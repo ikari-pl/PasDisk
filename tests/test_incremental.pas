@@ -9,7 +9,7 @@ program test_incremental;
 {$mode objfpc}{$H+}
 
 uses
-  SysUtils, Classes, FileTree, Traversal, Incremental, PlatformFS;
+  SysUtils, Classes, FileTree, Traversal, Incremental, ChangeJournal, PlatformFS;
 
 var
   Fail: Boolean;

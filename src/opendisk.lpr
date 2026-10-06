@@ -9,7 +9,7 @@ uses
   cthreads,
   {$ENDIF}
   SysUtils, Classes, DateUtils, FileTree, Traversal, Formatters, ChartItem, RingsSVG,
-  SearchIndex, Incremental, FSEventsJournal, ScanCache, Volumes, PlatformFS,
+  SearchIndex, Incremental, ChangeJournal, JournalFactory, ScanCache, Volumes, PlatformFS,
   PlatformShell;
 
 var
@@ -120,6 +120,19 @@ begin
   end;
 end;
 
+{ Current change-journal position, 0 where the platform has no journal. }
+function JournalEventID: QWord;
+var
+  Journal: TChangeJournal;
+begin
+  Journal := CreateChangeJournal;
+  try
+    Result := Journal.CurrentEventID;
+  finally
+    Journal.Free;
+  end;
+end;
+
 procedure CmdScan(const Path: string);
 var
   Tree: TFileTree;
@@ -129,7 +142,7 @@ var
   Started: QWord;
   StartedAt: Double;
 begin
-  EventID := CurrentFSEventsID;
+  EventID := JournalEventID;
   StartedAt := UnixTimeNow;
   Started := GetTickCount64;
   Tree := DoScan(Path);
@@ -156,14 +169,15 @@ procedure CmdRescan(const Path: string);
 var
   Expanded: string;
   Cached: TScanCacheEntry;
-  Ev: TFSEventsChanges;
+  Journal: TChangeJournal;
+  Collected: TJournalResult;
   Changes: TChangeSet;
   Before, After: Int64;
   EventID: QWord;
   Started: QWord;
   StartedAt: Double;
 begin
-  EventID := CurrentFSEventsID;
+  EventID := JournalEventID;
   StartedAt := UnixTimeNow;
   Expanded := ResolvePath(Path);
   Cached := ScanCacheLoad(Expanded);
@@ -177,22 +191,29 @@ begin
     Before := Cached.Tree.SizeOf(RootID);
     WriteLn('Cache hit (event ', Cached.Header.EventID, ', total ',
       FormatFileSize(Before), '). Checking FSEvents…');
-    Ev := CollectFSEventsChanges(Cached.Header.EventID, Expanded,
-      ReplayTimeBudget(ExpectedFullScanSeconds(Cached.Header, Expanded)));
-    if not Ev.OK then
+    Journal := CreateChangeJournal;
+    try
+      Collected := Journal.Collect(Cached.Header.EventID, Expanded,
+        ReplayTimeBudget(ExpectedFullScanSeconds(Cached.Header, Expanded)),
+        jmHistory, Changes);
+    finally
+      Journal.Free;
+    end;
+    if Collected <> jrChanges then
     begin
-      WriteLn('Change journal unreliable — falling back to full scan.');
+      if Collected = jrUnavailable then
+        WriteLn('No change journal on this platform — full scan.')
+      else
+        WriteLn('Change journal unreliable — falling back to full scan.');
       Cached.Tree.Free;
       Cached.Tree := nil;
       CmdScan(Path);
       Exit;
     end;
     try
-      Changes.ChangedDirectories := Ev.ChangedDirectories;
-      Changes.SubtreesToRescan := Ev.SubtreesToRescan;
-      WriteLn('Changes: ', Ev.ChangedDirectories.Count, ' dirs, ',
-        Ev.SubtreesToRescan.Count, ' subtrees');
-      if (Ev.ChangedDirectories.Count = 0) and (Ev.SubtreesToRescan.Count = 0) then
+      WriteLn('Changes: ', Changes.ChangedDirectories.Count, ' dirs, ',
+        Changes.SubtreesToRescan.Count, ' subtrees');
+      if (Changes.ChangedDirectories.Count = 0) and (Changes.SubtreesToRescan.Count = 0) then
       begin
         WriteLn('Up to date. Total ', FormatFileSize(Before));
         SaveScanCache(Cached.Tree, Expanded, EventID, StartedAt,
@@ -216,8 +237,8 @@ begin
       SaveScanCache(Cached.Tree, Expanded, EventID, StartedAt,
         Cached.Header.FullScanSeconds);
     finally
-      Ev.ChangedDirectories.Free;
-      Ev.SubtreesToRescan.Free;
+      Changes.ChangedDirectories.Free;
+      Changes.SubtreesToRescan.Free;
     end;
   finally
     Cached.Tree.Free;
@@ -319,13 +340,14 @@ var
   Expanded: string;
   Tree: TFileTree;
   EventID: QWord;
-  Ev: TFSEventsChanges;
+  Journal: TChangeJournal;
+  Collected: TJournalResult;
   Changes: TChangeSet;
   Before, After: Int64;
   StartedAt: Double;
 begin
   Expanded := ResolvePath(Path);
-  EventID := CurrentFSEventsID;
+  EventID := JournalEventID;
   StartedAt := UnixTimeNow;
   Tree := DoScan(Path);
   try
@@ -334,18 +356,24 @@ begin
     Before := Tree.SizeOf(RootID);
     WriteLn('Watching for FSEvents since ', EventID, ' (5s window)…');
     WriteLn('Touch files under ', Expanded, ' now.');
-    Ev := CollectFSEventsChanges(EventID, Expanded, 5.0, jmLiveWindow);
-    if not Ev.OK then
+    Journal := CreateChangeJournal;
+    try
+      Collected := Journal.Collect(EventID, Expanded, 5.0, jmLiveWindow, Changes);
+    finally
+      Journal.Free;
+    end;
+    if Collected <> jrChanges then
     begin
-      WriteLn('No reliable change set (timeout or dropped events). Tree unchanged.');
+      if Collected = jrUnavailable then
+        WriteLn('No change journal on this platform. Tree unchanged.')
+      else
+        WriteLn('No reliable change set (dropped events). Tree unchanged.');
       WriteLn('Total still ', FormatFileSize(Before));
       Exit;
     end;
     try
-      Changes.ChangedDirectories := Ev.ChangedDirectories;
-      Changes.SubtreesToRescan := Ev.SubtreesToRescan;
-      WriteLn('Changes: ', Ev.ChangedDirectories.Count, ' dirs, ',
-        Ev.SubtreesToRescan.Count, ' subtrees');
+      WriteLn('Changes: ', Changes.ChangedDirectories.Count, ' dirs, ',
+        Changes.SubtreesToRescan.Count, ' subtrees');
       if ApplyChanges(Tree, Expanded, Changes, StartedAt, @OnProgress) then
       begin
         Write(#13, StringOfChar(' ', 60), #13);
@@ -356,8 +384,8 @@ begin
       else
         WriteLn('Incremental apply failed; re-run scan for a full refresh.');
     finally
-      Ev.ChangedDirectories.Free;
-      Ev.SubtreesToRescan.Free;
+      Changes.ChangedDirectories.Free;
+      Changes.SubtreesToRescan.Free;
     end;
   finally
     Tree.Free;

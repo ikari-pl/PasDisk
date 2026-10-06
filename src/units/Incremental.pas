@@ -13,13 +13,8 @@ unit Incremental;
 interface
 
 uses
-  SysUtils, Classes, FileTree, DirTypes, PlatformDirReader, Traversal, PlatformFS, Volumes;
-
-type
-  TChangeSet = record
-    ChangedDirectories: TStringList;
-    SubtreesToRescan: TStringList;
-  end;
+  SysUtils, Classes, FileTree, DirTypes, PlatformDirReader, Traversal, PlatformFS, Volumes,
+  ChangeJournal;
 
 { Applies the change set in place. Like IncrementalUpdater.apply, a False
   result can leave Tree partially updated: callers must discard it and run

@@ -10,7 +10,6 @@ set -u
 cd "${CHECK_PLATFORM_ROOT:-$(dirname "$0")/..}"
 
 BASELINE="
-src/units/FSEventsJournal.pas
 "
 BASELINE="${CHECK_PLATFORM_BASELINE-$BASELINE}"
 

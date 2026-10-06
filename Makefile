@@ -22,7 +22,7 @@ opendisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirTypes.pas $(
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/Formatters.pas \
 		$(UNITDIR)/ChartItem.pas $(UNITDIR)/RingsLayout.pas \
 		$(UNITDIR)/RingsSVG.pas $(UNITDIR)/SearchIndex.pas \
-		$(UNITDIR)/Incremental.pas $(UNITDIR)/FSEventsJournal.pas \
+		$(UNITDIR)/Incremental.pas $(UNITDIR)/ChangeJournal.pas $(UNITDIR)/PlatformChangeJournal.pas $(UNITDIR)/JournalFactory.pas \
 		$(UNITDIR)/ScanCache.pas $(UNITDIR)/Volumes.pas \
 		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
 		$(UNITDIR)/PlatformShell.pas
@@ -79,10 +79,10 @@ tests/test_scancache: tests/test_scancache.pas $(UNITDIR)/FileTree.pas \
 tests/test_incremental: tests/test_incremental.pas $(UNITDIR)/FileTree.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Incremental.pas $(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
-		$(UNITDIR)/Volumes.pas
+		$(UNITDIR)/Volumes.pas $(UNITDIR)/ChangeJournal.pas $(UNITDIR)/PlatformChangeJournal.pas $(UNITDIR)/JournalFactory.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_incremental tests/test_incremental.pas
 
-tests/test_fsevents: tests/test_fsevents.pas $(UNITDIR)/FSEventsJournal.pas \
+tests/test_fsevents: tests/test_fsevents.pas $(UNITDIR)/ChangeJournal.pas $(UNITDIR)/PlatformChangeJournal.pas $(UNITDIR)/JournalFactory.pas \
 		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_fsevents tests/test_fsevents.pas
 
@@ -109,6 +109,7 @@ tests/test_traversal: tests/test_traversal.pas $(UNITDIR)/Traversal.pas \
 	$(FPC) $(BUILDFLAGS) -otests/test_traversal tests/test_traversal.pas
 
 tests/test_volumeroot: tests/test_volumeroot.pas $(UNITDIR)/Incremental.pas \
+		$(UNITDIR)/ChangeJournal.pas $(UNITDIR)/PlatformChangeJournal.pas $(UNITDIR)/JournalFactory.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Volumes.pas $(UNITDIR)/PlatformVolumes.pas
 	$(FPC) $(BUILDFLAGS) -otests/test_volumeroot tests/test_volumeroot.pas

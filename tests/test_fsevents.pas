@@ -1,5 +1,7 @@
-{ FSEventsJournal: history replay ends on HistoryDone (FSEventsChangeJournal
-  .swift), so an unchanged tree answers quickly; changes are still seen. }
+{ ChangeJournal: on Darwin, history replay ends when the FSEvents history
+  is done (FSEventsChangeJournal.swift), so an unchanged tree answers
+  quickly and changes are still seen; the live window runs its window.
+  Elsewhere the journal is unavailable and says so. }
 
 program test_fsevents;
 
@@ -7,7 +9,7 @@ program test_fsevents;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, FSEventsJournal, PlatformFS;
+  SysUtils, Classes, ChangeJournal, JournalFactory, PlatformFS;
 
 var
   Fail: Boolean;
@@ -32,65 +34,74 @@ begin
   F.Free;
 end;
 
-procedure FreeChanges(var Ev: TFSEventsChanges);
+procedure FreeChanges(var Changes: TChangeSet);
 begin
-  Ev.ChangedDirectories.Free;
-  Ev.SubtreesToRescan.Free;
+  Changes.ChangedDirectories.Free;
+  Changes.SubtreesToRescan.Free;
 end;
 
 var
+  Journal: TChangeJournal;
   EventID: QWord;
-  Ev: TFSEventsChanges;
+  Changes: TChangeSet;
+  Collected: TJournalResult;
   Started: QWord;
   Elapsed: Double;
 begin
-  {$IFNDEF DARWIN}
-  WriteLn('test_fsevents: skipped (FSEvents is Darwin-only)');
-  Exit;
-  {$ENDIF}
   Fail := False;
+  Expect(Abs(ReplayTimeBudget(0) - 2) < 1e-9, 'replay budget floor is 2s');
+  Expect(Abs(ReplayTimeBudget(10) - 5) < 1e-9, 'replay budget is half the full scan');
+  Expect(Abs(ReplayTimeBudget(600) - 30) < 1e-9, 'replay budget caps at 30s');
+
   Root := ResolveRealPath(GetTempDir(False)) + '/od_fse_' + IntToStr(GetProcessID);
   ForceDirectories(Root + '/sub');
+  Journal := CreateChangeJournal;
   try
+    {$IFDEF DARWIN}
     { Let the directory creation events land before taking the id. }
     Sleep(1500);
-    EventID := CurrentFSEventsID;
+    EventID := Journal.CurrentEventID;
+    Expect(EventID <> 0, 'FSEvents journal has a position');
 
     Started := GetTickCount64;
-    Ev := CollectFSEventsChanges(EventID, Root, 10.0);
+    Collected := Journal.Collect(EventID, Root, 10.0, jmHistory, Changes);
     Elapsed := (GetTickCount64 - Started) / 1000.0;
-    Expect(Ev.OK, 'unchanged tree: history replay completes');
+    Expect(Collected = jrChanges, 'unchanged tree: history replay completes');
     Expect(Elapsed < 1.5, Format('unchanged tree answers fast (%.2fs < 1.5s, timeout 10s)', [Elapsed]));
-    if Ev.OK then
+    if Collected = jrChanges then
     begin
-      Expect(Ev.ChangedDirectories.Count + Ev.SubtreesToRescan.Count = 0,
+      Expect(Changes.ChangedDirectories.Count + Changes.SubtreesToRescan.Count = 0,
         'unchanged tree reports no changes');
-      FreeChanges(Ev);
+      FreeChanges(Changes);
     end;
 
     Touch(Root + '/sub/new-file');
     Sleep(1500);
-    Ev := CollectFSEventsChanges(EventID, Root, 10.0);
-    Expect(Ev.OK, 'changed tree: history replay completes');
-    if Ev.OK then
+    Collected := Journal.Collect(EventID, Root, 10.0, jmHistory, Changes);
+    Expect(Collected = jrChanges, 'changed tree: history replay completes');
+    if Collected = jrChanges then
     begin
-      Expect(Ev.ChangedDirectories.IndexOf(Root + '/sub') >= 0,
+      Expect(Changes.ChangedDirectories.IndexOf(Root + '/sub') >= 0,
         'new file reports its directory as changed');
-      FreeChanges(Ev);
+      FreeChanges(Changes);
     end;
 
     { Live window keeps listening for the full window and succeeds. }
     Started := GetTickCount64;
-    Ev := CollectFSEventsChanges(CurrentFSEventsID, Root, 1.0, jmLiveWindow);
+    Collected := Journal.Collect(Journal.CurrentEventID, Root, 1.0, jmLiveWindow, Changes);
     Elapsed := (GetTickCount64 - Started) / 1000.0;
-    Expect(Ev.OK and (Elapsed >= 0.9), Format('live window runs its window (%.2fs)', [Elapsed]));
-    if Ev.OK then
-      FreeChanges(Ev);
-
-    Expect(Abs(ReplayTimeBudget(0) - 2) < 1e-9, 'replay budget floor is 2s');
-    Expect(Abs(ReplayTimeBudget(10) - 5) < 1e-9, 'replay budget is half the full scan');
-    Expect(Abs(ReplayTimeBudget(600) - 30) < 1e-9, 'replay budget caps at 30s');
+    Expect((Collected = jrChanges) and (Elapsed >= 0.9),
+      Format('live window runs its window (%.2fs)', [Elapsed]));
+    if Collected = jrChanges then
+      FreeChanges(Changes);
+    {$ELSE}
+    Expect(Journal.CurrentEventID = 0, 'no journal: position is 0');
+    Collected := Journal.Collect(0, Root, 1.0, jmHistory, Changes);
+    Expect((Collected = jrUnavailable) and (Changes.ChangedDirectories = nil) and
+      (Changes.SubtreesToRescan = nil), 'no journal: unavailable, no lists');
+    {$ENDIF}
   finally
+    Journal.Free;
     DeleteFile(Root + '/sub/new-file');
     RemoveDir(Root + '/sub');
     RemoveDir(Root);
