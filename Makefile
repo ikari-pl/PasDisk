@@ -14,7 +14,7 @@ BUILDFLAGS = -Mobjfpc -Scghi -O2 -g -gl -Fi$(UNITDIR) -Fu$(UNITDIR) \
 	$(if $(UNIVINT),-Fu$(UNIVINT)) \
 	-k'-framework CoreFoundation' -k'-framework CoreServices' -FE. -FU.
 
-.PHONY: all clean test gui
+.PHONY: all clean test gui check-platform
 
 all: opendisk
 
@@ -34,6 +34,11 @@ gui: src/gui/OpenDiskGUI.lpi tools/ldwrap/ld
 		--opt="-FD$(LDWRAP)" \
 		src/gui/OpenDiskGUI.lpi
 
+# OS-specific code stays in src/units/Platform*.pas (od-31j.29).
+check-platform:
+	./tests/test_check_platform.sh
+	./tools/check-platform.sh
+
 # ld and the as symlink are generated; ld.in finds ld-classic via xcrun.
 tools/ldwrap/ld: tools/ldwrap/ld.in
 	@AS=$$(xcrun --find as 2>/dev/null) || { echo "xcrun cannot find 'as': install Xcode" >&2; exit 1; }; \
@@ -44,6 +49,8 @@ test: tests/test_filetree tests/test_dirreader tests/test_scancache \
 		tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
 		tests/test_traversal tests/test_volumeroot
+	./tests/test_check_platform.sh
+	./tools/check-platform.sh
 	./tests/test_filetree
 	./tests/test_dirreader
 	./tests/test_scancache

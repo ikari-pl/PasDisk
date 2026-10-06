@@ -18,6 +18,7 @@ ppas.sh
 /opendisk-gui.app/
 /tests/test_*
 !/tests/test_*.pas
+!/tests/test_*.sh
 
 # PascaLS / IDE
 .pascals.db
