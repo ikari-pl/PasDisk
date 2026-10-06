@@ -14,6 +14,9 @@ type
   TRingSelectEvent = procedure(Sender: TObject; const Path: string;
     IsCenter: Boolean) of object;
 
+  { A drag of a segment began (RingsChartView fileDrag). }
+  TRingDragEvent = procedure(Sender: TObject; Seg: TRingSegment) of object;
+
   TRingsChart = class(TCustomControl)
   private
     FRoot: TChartItem;
@@ -23,6 +26,10 @@ type
     FHoverActive: Boolean;
     FEnvHoverApplied: Boolean;
     FOnSelect: TRingSelectEvent;
+    FOnDragSegment: TRingDragEvent;
+    { DragGesture(minimumDistance: 4) from the press point. }
+    FPressX, FPressY: Integer;
+    FPressed, FDragging: Boolean;
     FLayout: TRingsLayout;
     FStaticLayer: TChartCanvasCache;
     procedure SetRoot(AValue: TChartItem);
@@ -38,8 +45,12 @@ type
     procedure Resize; override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
     procedure MouseLeave; override;
+    procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
+    procedure MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
     procedure Click; override;
   public
+    { The drag ended (its mouse-up never reaches the control). }
+    procedure DragFinished;
     { Colours come from the appearance: drop the cached layer. }
     procedure AppearanceChanged;
     constructor Create(AOwner: TComponent); override;
@@ -47,6 +58,7 @@ type
     procedure TakeRoot(ARoot: TChartItem);
     property Root: TChartItem read FRoot write SetRoot;
     property OnSelect: TRingSelectEvent read FOnSelect write FOnSelect;
+    property OnDragSegment: TRingDragEvent read FOnDragSegment write FOnDragSegment;
   end;
 
 implementation
@@ -451,6 +463,20 @@ var
   NewPath: string;
 begin
   inherited;
+  if FPressed and not FDragging and (ssLeft in Shift) and
+    (Sqr(X - FPressX) + Sqr(Y - FPressY) >= 16) then
+  begin
+    { draggableSegment(at: startLocation): depth >= 1, a file or folder. }
+    FDragging := True;
+    if FLayout <> nil then
+    begin
+      Hit := FLayout.SegmentAt(FPressX, FPressY);
+      if (Hit <> nil) and (Hit.Depth >= 1) and (Hit.Kind in [ckDirectory, ckFile]) and
+        Assigned(FOnDragSegment) then
+        FOnDragSegment(Self, Hit);
+    end;
+    Exit;
+  end;
   NewPath := '';
   if FLayout <> nil then
   begin
@@ -480,13 +506,41 @@ begin
   end;
 end;
 
+procedure TRingsChart.MouseDown(Button: TMouseButton; Shift: TShiftState;
+  X, Y: Integer);
+begin
+  inherited MouseDown(Button, Shift, X, Y);
+  if Button = mbLeft then
+  begin
+    FPressX := X;
+    FPressY := Y;
+    FPressed := True;
+    FDragging := False;
+  end;
+end;
+
+procedure TRingsChart.MouseUp(Button: TMouseButton; Shift: TShiftState;
+  X, Y: Integer);
+begin
+  inherited MouseUp(Button, Shift, X, Y);
+  if Button = mbLeft then
+    FPressed := False;
+end;
+
+procedure TRingsChart.DragFinished;
+begin
+  FPressed := False;
+  FDragging := False;
+end;
+
 procedure TRingsChart.Click;
 var
   P: TPoint;
   Hit: TRingSegment;
 begin
   inherited Click;
-  if FLayout = nil then
+  { A drag is not a click. }
+  if (FLayout = nil) or FDragging then
     Exit;
   P := ScreenToClient(Mouse.CursorPos);
   Hit := FLayout.SegmentAt(P.X, P.Y);

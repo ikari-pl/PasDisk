@@ -15,7 +15,7 @@ uses
   ChartItem, Formatters, Collector, ProtectedPaths, Volumes, PlatformVolumes, PlatformAppearance,
   GuiColors, BreadcrumbBar, TextTrim, EmptyStateView, ScanTopology, ScanStatusBar,
   DisplayList, CleanableSpace, FullDiskAccessUI, SearchController,
-  CollectorBarView, PlatformAlert;
+  CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -110,6 +110,12 @@ type
     { FolderRowView / FileActionsMenu context menu (PARITY gaps 14-15). }
     FRowMenu: TPopupMenu;
     FMenuRow: Integer;
+    { Utilities/FileDrag.swift: the files of the in-app drag in flight,
+      whether the chart pane is targeted, and the protected reason. }
+    FDragFiles: array of TFolderItem;
+    FDropTargeted: Boolean;
+    FDragReject: string;
+    FRejectTimer, FDragOutTimer: TTimer;
     { CollectorBar deleting / done phases (od-31j.46). }
     FDeleteJob: TDeleteJob;
     FDeletePoll: TTimer;
@@ -191,6 +197,21 @@ type
     procedure MenuShowInFinderClick(Sender: TObject);
     procedure MenuCopyPathClick(Sender: TObject);
     procedure MenuHookTick(Sender: TObject);
+    procedure SetUpFileDrag;
+    procedure UpdateBarPhase;
+    procedure FlagDragProtected;
+    function ListDragItem(Row: Integer; out Item: TDragItem): Boolean;
+    procedure ListDragBegan(const Rows: array of Integer);
+    procedure ChartDragSegment(Sender: TObject; Seg: TRingSegment);
+    procedure FileDragEnded(const ScreenPt: TPoint; Accepted: Boolean);
+    procedure CollectorDragOut(Sender: TObject; Source: TWinControl;
+      const Paths: array of string);
+    procedure DragOutEnded(const ScreenPt: TPoint; Accepted: Boolean);
+    function ChartDropUpdate(const ScreenPt: TPoint): Boolean;
+    procedure ChartDropExit;
+    function ChartDrop(const ScreenPt: TPoint): Boolean;
+    procedure RejectTick(Sender: TObject);
+    procedure DragOutTick(Sender: TObject);
     procedure ConfirmHookTick(Sender: TObject);
     procedure DeletePollTick(Sender: TObject);
     procedure DoneTimerTick(Sender: TObject);
@@ -414,6 +435,7 @@ begin
     OPENDISK_GUI_SHOW=<subfolder> then opens a folder inside it). }
   if GetEnvironmentVariable('OPENDISK_GUI_SCAN') <> '' then
     StartScan(GetEnvironmentVariable('OPENDISK_GUI_SCAN'), '', 0, 0);
+  SetUpFileDrag;
 end;
 
 procedure TMainForm.BuildUI;
@@ -1246,6 +1268,7 @@ var
   Thread: TScanThread;
   ShowPath: string;
   StageNames: TStringList;
+  DragSample: TDragItem;
   Staged: TNodeID;
   I: Integer;
 begin
@@ -1316,6 +1339,13 @@ begin
         OnTimer := @ConfirmHookTick;
         Enabled := True;
       end;
+    { Automation: OPENDISK_GUI_DRAG_SELFTEST=<png> prints the drag wiring
+      and saves the first row's drag label. }
+    if (GetEnvironmentVariable('OPENDISK_GUI_DRAG_SELFTEST') <> '') and
+      ListDragItem(0, DragSample) then
+      WriteLn('drag self-test: ', FileDragSelfTest(FList, FChartPanel, DragSample,
+        GetEnvironmentVariable('OPENDISK_GUI_DRAG_SELFTEST')));
+    Flush(Output);
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
     if GetEnvironmentVariable('OPENDISK_GUI_MENU') <> '' then
       with TTimer.Create(Self) do
@@ -1840,8 +1870,234 @@ begin
   end;
   FCollectorBar.SetItems(Items);
   { Deleting and done phases own the footer until they end. }
-  if (FDeleteJob = nil) and not FDoneTimer.Enabled then
+  UpdateBarPhase;
+end;
+
+{ CollectorBar phase outside deletion: the protected-drag rejection, the
+  drop target (not while dragging out), or idle. }
+procedure TMainForm.UpdateBarPhase;
+begin
+  if (FDeleteJob <> nil) or FDoneTimer.Enabled then
+    Exit;
+  if FDragReject <> '' then
+    FCollectorBar.SetPhase(cbRejecting, FDragReject)
+  else if FDropTargeted and not FCollector.IsDraggingOut then
+    FCollectorBar.SetPhase(cbTargeted)
+  else
     FCollectorBar.SetPhase(cbIdle);
+end;
+
+procedure TMainForm.SetUpFileDrag;
+begin
+  FRejectTimer := TTimer.Create(Self);
+  FRejectTimer.Enabled := False;
+  { flagDraggedProtected: the rejection clears itself after 4 s. }
+  FRejectTimer.Interval := 4000;
+  FRejectTimer.OnTimer := @RejectTick;
+  FDragOutTimer := TTimer.Create(Self);
+  FDragOutTimer.Enabled := False;
+  { endDragOut: a drop another app took ends the drag-out after 2 s. }
+  FDragOutTimer.Interval := 2000;
+  FDragOutTimer.OnTimer := @DragOutTick;
+  FChart.OnDragSegment := @ChartDragSegment;
+  FCollectorBar.OnDragOut := @CollectorDragOut;
+  FList.HandleNeeded;
+  EnableListRowDrag(FList, @ListDragItem, @ListDragBegan, @FileDragEnded);
+  FChartPanel.HandleNeeded;
+  RegisterDropZone(FChartPanel, @ChartDropUpdate, @ChartDropExit, @ChartDrop);
+end;
+
+{ FolderRowView.draggedProtectedReason / RingsChartView.protectedReason. }
+procedure TMainForm.FlagDragProtected;
+var
+  I: Integer;
+  Reason: string;
+begin
+  FDragReject := '';
+  for I := 0 to High(FDragFiles) do
+  begin
+    Reason := ProtectedReason(FDragFiles[I].Path);
+    if Reason <> '' then
+    begin
+      FDragReject := '“' + FDragFiles[I].Name + '” ' + Reason;
+      Break;
+    end;
+  end;
+  FRejectTimer.Enabled := False;
+  FRejectTimer.Enabled := FDragReject <> '';
+  UpdateBarPhase;
+end;
+
+procedure TMainForm.RejectTick(Sender: TObject);
+begin
+  FRejectTimer.Enabled := False;
+  FDragReject := '';
+  UpdateBarPhase;
+end;
+
+{ Rows drag as files; synthetic rows (Purgeable Space) do not yet. }
+function TMainForm.ListDragItem(Row: Integer; out Item: TDragItem): Boolean;
+var
+  F: TFolderItem;
+begin
+  Result := RowItem(Row, F) and (Copy(F.Path, 1, 2) <> '::');
+  if not Result then
+    Exit;
+  Item.Path := F.Path;
+  Item.Name := F.Name;
+  Item.Size := F.Size;
+  Item.IsDirectory := F.IsDirectory;
+end;
+
+procedure TMainForm.ListDragBegan(const Rows: array of Integer);
+var
+  I: Integer;
+  F: TFolderItem;
+begin
+  FDragFiles := nil;
+  for I := 0 to High(Rows) do
+    if RowItem(Rows[I], F) and (Copy(F.Path, 1, 2) <> '::') then
+    begin
+      SetLength(FDragFiles, Length(FDragFiles) + 1);
+      FDragFiles[High(FDragFiles)] := F;
+    end;
+  FlagDragProtected;
+end;
+
+procedure TMainForm.ChartDragSegment(Sender: TObject; Seg: TRingSegment);
+var
+  Items: TDragItems;
+begin
+  SetLength(FDragFiles, 1);
+  FDragFiles[0].Path := Seg.Path;
+  FDragFiles[0].Name := Seg.Name;
+  FDragFiles[0].Size := Seg.Size;
+  FDragFiles[0].IsDirectory := Seg.Kind = ckDirectory;
+  FDragFiles[0].ItemCount := 0;
+  SetLength(Items, 1);
+  Items[0].Path := Seg.Path;
+  Items[0].Name := Seg.Name;
+  Items[0].Size := Seg.Size;
+  Items[0].IsDirectory := Seg.Kind = ckDirectory;
+  FlagDragProtected;
+  if not BeginFileDrag(FChart, Items, True, @FileDragEnded) then
+    FileDragEnded(Point(0, 0), False);
+end;
+
+{ onEnd: flagDraggedProtected(nil). }
+procedure TMainForm.FileDragEnded(const ScreenPt: TPoint; Accepted: Boolean);
+begin
+  FChart.DragFinished;
+  FDragFiles := nil;
+  FDropTargeted := False;
+  FRejectTimer.Enabled := False;
+  FDragReject := '';
+  UpdateBarPhase;
+end;
+
+{ CollectedRow / footer fileDrag(exportsFileURLs: false): beginDragOut. }
+procedure TMainForm.CollectorDragOut(Sender: TObject; Source: TWinControl;
+  const Paths: array of string);
+var
+  Items: TDragItems;
+  I, Idx: Integer;
+  F: TCollectedFile;
+begin
+  FDragOutTimer.Enabled := False;
+  FCollector.BeginDragOut(Paths);
+  Items := nil;
+  for I := 0 to High(Paths) do
+    for Idx := 0 to FCollector.Count - 1 do
+    begin
+      F := TCollectedFile(FCollector.Items[Idx]);
+      if F.Path = Paths[I] then
+      begin
+        SetLength(Items, Length(Items) + 1);
+        Items[High(Items)].Path := F.Path;
+        Items[High(Items)].Name := F.Name;
+        Items[High(Items)].Size := F.Size;
+        Items[High(Items)].IsDirectory := F.IsDirectory;
+      end;
+    end;
+  FCollectorBar.SetDraggingOut(True);
+  if not BeginFileDrag(Source, Items, False, @DragOutEnded) then
+  begin
+    FCollector.CancelDragOut;
+    FCollectorBar.SetDraggingOut(False);
+    FCollectorBar.DragFinished;
+  end;
+end;
+
+procedure TMainForm.DragOutEnded(const ScreenPt: TPoint; Accepted: Boolean);
+begin
+  FCollectorBar.DragFinished;
+  FDropTargeted := False;
+  FCollector.EndDragOut(Accepted);
+  { Still pending: another app took the drop; it ends in 2 s. }
+  FDragOutTimer.Enabled := FCollector.IsDraggingOut;
+  FCollectorBar.SetDraggingOut(FCollector.IsDraggingOut);
+  RefreshCollector;
+  RefreshList;
+end;
+
+procedure TMainForm.DragOutTick(Sender: TObject);
+begin
+  FDragOutTimer.Enabled := False;
+  FCollector.CancelDragOut;
+  FCollectorBar.SetDraggingOut(False);
+  UpdateBarPhase;
+end;
+
+{ InAppFileDropDelegate.dropEntered / dropUpdated: the whole chart pane
+  takes the drop. }
+function TMainForm.ChartDropUpdate(const ScreenPt: TPoint): Boolean;
+begin
+  Result := True;
+  if not FDropTargeted then
+  begin
+    FDropTargeted := True;
+    UpdateBarPhase;
+  end;
+end;
+
+procedure TMainForm.ChartDropExit;
+begin
+  if FDropTargeted then
+  begin
+    FDropTargeted := False;
+    UpdateBarPhase;
+  end;
+end;
+
+{ DiskAnalysisView.handleCollectorDrop. }
+function TMainForm.ChartDrop(const ScreenPt: TPoint): Boolean;
+var
+  Allowed: array of TFolderItem;
+  I: Integer;
+begin
+  Result := True;
+  if FCollector.IsDraggingOut then
+  begin
+    FCollector.ResolveDragOut(FCollectorBar.InKeepZone(ScreenPt));
+    FCollectorBar.SetDraggingOut(False);
+    RefreshCollector;
+    RefreshList;
+    Exit;
+  end;
+  FRejectTimer.Enabled := False;
+  FDragReject := '';
+  Allowed := nil;
+  for I := 0 to High(FDragFiles) do
+    if not IsProtectedPath(FDragFiles[I].Path) then
+    begin
+      SetLength(Allowed, Length(Allowed) + 1);
+      Allowed[High(Allowed)] := FDragFiles[I];
+    end;
+  Result := Length(Allowed) > 0;
+  if Result then
+    StageItems(Allowed)
+  else
+    UpdateBarPhase;
 end;
 
 { The real item behind a list row (folder node or search result); False

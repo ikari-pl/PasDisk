@@ -33,6 +33,10 @@ type
 
   TCollectorButtonEvent = procedure(Sender: TObject) of object;
   TCollectorRemoveEvent = procedure(Sender: TObject; const Path: string) of object;
+  { A drag out of the collector began from Source (CollectorBar fileDrag
+    with exportsFileURLs: false): one row, or every item from the footer. }
+  TCollectorDragOutEvent = procedure(Sender: TObject; Source: TWinControl;
+    const Paths: array of string) of object;
 
   TCollectorBarView = class;
 
@@ -43,8 +47,11 @@ type
     FBar: TCollectorBarView;
     FIsList: Boolean;
     FHover: Integer;
+    FPressRow, FPressX, FPressY: Integer;
+    FDragged: Boolean;
   protected
     procedure Paint; override;
+    procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
     procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
     procedure MouseLeave; override;
     procedure MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
@@ -70,6 +77,11 @@ type
     FDeleteRect: TRect;
     FOnDeleteClick: TCollectorButtonEvent;
     FOnRemoveItem: TCollectorRemoveEvent;
+    FOnDragOut: TCollectorDragOutEvent;
+    { collector.draggingOut != nil: the list hides and nothing targets. }
+    FDraggingOut: Boolean;
+    FPressed, FDragged: Boolean;
+    FPressX, FPressY: Integer;
     procedure CollapseTick(Sender: TObject);
     procedure NoticeTick(Sender: TObject);
     procedure SpinTick(Sender: TObject);
@@ -88,9 +100,16 @@ type
     procedure SetParent(NewParent: TWinControl); override;
     procedure MouseEnter; override;
     procedure MouseLeave; override;
+    procedure MouseDown(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
+    procedure MouseMove(Shift: TShiftState; X, Y: Integer); override;
     procedure MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer); override;
   public
     constructor Create(AOwner: TComponent); override;
+    procedure SetDraggingOut(Value: Boolean);
+    { The drag ended; its mouse-up never reaches the control. }
+    procedure DragFinished;
+    { keepZones: the footer, and the list while it shows. }
+    function InKeepZone(const ScreenPt: TPoint): Boolean;
     destructor Destroy; override;
     procedure SetItems(const Items: TCollectorItems);
     { cbTargeted / cbRejecting describe a drag; RejectReason is shown while
@@ -104,6 +123,7 @@ type
     procedure SetListVisible(Value: Boolean);
     property OnDeleteClick: TCollectorButtonEvent read FOnDeleteClick write FOnDeleteClick;
     property OnRemoveItem: TCollectorRemoveEvent read FOnRemoveItem write FOnRemoveItem;
+    property OnDragOut: TCollectorDragOutEvent read FOnDragOut write FOnDragOut;
   end;
 
 implementation
@@ -145,6 +165,7 @@ begin
   FBar := Bar;
   FIsList := IsList;
   FHover := -1;
+  FPressRow := -1;
   ControlStyle := ControlStyle + [csOpaque];
   Visible := False;
 end;
@@ -221,6 +242,29 @@ begin
   end;
 end;
 
+{ Swift's remove button: the leading 31 pt of a row. }
+const
+  RemoveZone = 6 + 8 + 9 + 8;
+
+procedure TCollectorOverlay.MouseDown(Button: TMouseButton; Shift: TShiftState;
+  X, Y: Integer);
+var
+  I: Integer;
+begin
+  inherited MouseDown(Button, Shift, X, Y);
+  FPressRow := -1;
+  FDragged := False;
+  if (not FIsList) or (Button <> mbLeft) or (Y < 8) or (X < RemoveZone) then
+    Exit;
+  I := (Y - 8) div RowHeight;
+  if I <= High(FBar.FItems) then
+  begin
+    FPressRow := I;
+    FPressX := X;
+    FPressY := Y;
+  end;
+end;
+
 procedure TCollectorOverlay.MouseMove(Shift: TShiftState; X, Y: Integer);
 var
   H: Integer;
@@ -228,6 +272,15 @@ begin
   inherited MouseMove(Shift, X, Y);
   if not FIsList then
     Exit;
+  { DragGesture(minimumDistance: 4) on a CollectedRow. }
+  if (FPressRow >= 0) and not FDragged and (ssLeft in Shift) and
+    (Sqr(X - FPressX) + Sqr(Y - FPressY) >= 16) then
+  begin
+    FDragged := True;
+    if Assigned(FBar.FOnDragOut) then
+      FBar.FOnDragOut(FBar, Self, [FBar.FItems[FPressRow].Path]);
+    Exit;
+  end;
   FBar.ListHover(True);
   H := (Y - 8) div RowHeight;
   if (Y < 8) or (H > High(FBar.FItems)) then
@@ -254,11 +307,11 @@ var
   I: Integer;
 begin
   inherited MouseUp(Button, Shift, X, Y);
-  if (not FIsList) or (Button <> mbLeft) then
+  FPressRow := -1;
+  if (not FIsList) or (Button <> mbLeft) or FDragged then
     Exit;
   I := (Y - 8) div RowHeight;
-  { The remove button: the leading 30 pt of a row. }
-  if (Y >= 8) and (I >= 0) and (I <= High(FBar.FItems)) and (X < 6 + 8 + 9 + 8) and
+  if (Y >= 8) and (I >= 0) and (I <= High(FBar.FItems)) and (X < RemoveZone) and
     Assigned(FBar.FOnRemoveItem) then
     FBar.FOnRemoveItem(FBar, FBar.FItems[I].Path);
 end;
@@ -572,7 +625,7 @@ end;
 function TCollectorBarView.WantsList: Boolean;
 begin
   { wantsList: idle, something staged, footer or list hovered. }
-  Result := (FPhase = cbIdle) and (Length(FItems) > 0) and
+  Result := (FPhase = cbIdle) and (Length(FItems) > 0) and not FDraggingOut and
     (FForceList or FFooterHovered or FListHovered);
 end;
 
@@ -649,10 +702,70 @@ begin
     FCollapse.Enabled := True;
 end;
 
+procedure TCollectorBarView.MouseDown(Button: TMouseButton; Shift: TShiftState;
+  X, Y: Integer);
+begin
+  inherited MouseDown(Button, Shift, X, Y);
+  { The total and count drag every staged item; the button does not. }
+  FPressed := (Button = mbLeft) and (FPhase = cbIdle) and (Length(FItems) > 0) and
+    not PtInRect(FDeleteRect, Point(X, Y));
+  FDragged := False;
+  FPressX := X;
+  FPressY := Y;
+end;
+
+procedure TCollectorBarView.MouseMove(Shift: TShiftState; X, Y: Integer);
+var
+  Paths: array of string;
+  I: Integer;
+begin
+  inherited MouseMove(Shift, X, Y);
+  if FPressed and not FDragged and (ssLeft in Shift) and
+    (Sqr(X - FPressX) + Sqr(Y - FPressY) >= 16) then
+  begin
+    FDragged := True;
+    SetLength(Paths, Length(FItems));
+    for I := 0 to High(FItems) do
+      Paths[I] := FItems[I].Path;
+    if Assigned(FOnDragOut) then
+      FOnDragOut(Self, Self, Paths);
+  end;
+end;
+
+procedure TCollectorBarView.SetDraggingOut(Value: Boolean);
+begin
+  if FDraggingOut = Value then
+    Exit;
+  FDraggingOut := Value;
+  { The list disappears while its items are dragged out. }
+  if Value and (FList <> nil) then
+    FList.Visible := False;
+  UpdateOverlays;
+end;
+
+procedure TCollectorBarView.DragFinished;
+begin
+  FPressed := False;
+  FDragged := False;
+  if FList <> nil then
+  begin
+    FList.FPressRow := -1;
+    FList.FDragged := False;
+  end;
+end;
+
+function TCollectorBarView.InKeepZone(const ScreenPt: TPoint): Boolean;
+begin
+  Result := PtInRect(ClientRect, ScreenToClient(ScreenPt)) or
+    ((FList <> nil) and FList.Visible and
+     PtInRect(FList.ClientRect, FList.ScreenToClient(ScreenPt)));
+end;
+
 procedure TCollectorBarView.MouseUp(Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
 begin
   inherited MouseUp(Button, Shift, X, Y);
-  if (Button = mbLeft) and PtInRect(FDeleteRect, Point(X, Y)) and
+  FPressed := False;
+  if (Button = mbLeft) and not FDragged and PtInRect(FDeleteRect, Point(X, Y)) and
     Assigned(FOnDeleteClick) then
     FOnDeleteClick(Self);
 end;
