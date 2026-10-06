@@ -59,7 +59,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 
 | Feature | Swift ref | Pascal ref | Engine/CLI | GUI | Bead | Note |
 |---|---|---|---|---|---|---|
-| Volume list: "Computer" (`/`) + browsable, readable, non-boot volumes with capacity | Services/DeviceMonitor.swift:19-60 | units/Volumes.pas:76-126; PlatformVolumes.pas:139-222 | Partial | Partial | od-31j.7, od-31j.27, od-31j.47 | Sorted by path since 18aa155. Pascal uses `kCFURLEnumeratorSkipInvisibles` where Swift uses `.skipHiddenVolumes`. **Unverified** that the two filters select the same volumes. |
+| Volume list: "Computer" (`/`) + browsable, readable, non-boot volumes with capacity | Services/DeviceMonitor.swift:19-60 | units/Volumes.pas:76-126; PlatformVolumes.pas:139-222 | Done | Done | od-31j.7, od-31j.27, od-31j.47 | Sorted by path since 18aa155. Pascal enumerates with kCFURLEnumeratorSkipInvisibles, Swift with .skipHiddenVolumes; on this machine (2026-10-06) Swift's call returned /, /Volumes/extSSD and ~/OrbStack and the GUI picker lists Computer, extSSD and OrbStack — the same set. Not compared on other machines. |
 | Capacity: available = max(free, important-usage), clamped to total; purgeable = available - free | Models/DeviceInfo.swift:23-35; DeviceMonitor.swift:62-81 | units/Volumes.pas:54-61; PlatformVolumes.pas:191-222 | Done | Done | od-31j.18.7 | Status-bar readout with the purgeable amount in its hint (5ae2396). |
 | Live volume refresh | DeviceMonitor.swift:9-17 | gui/uMainForm.pas:254-261, 530-533 (Refresh button) | N/A | Done | od-31j.18.9 | The Swift source has no mount/unmount observer: `refresh()` runs only from `init`. The premise of od-31j.18.9 ("Swift refreshes on mount") is not supported by the source. |
 | Full Disk Access probe (`isGranted`) | Services/FullDiskAccess.swift:11-43 | units/PlatformFullDiskAccess.pas | Done | Done | od-31j.18.12 | 07394ea. Same probe paths and rule. |
@@ -221,7 +221,7 @@ Distribution:
 ## Unverified items
 
 - ~~**`/` scan misses the Data volume**~~ — resolved by od-31j.39: confirmed from source and by `tests/test_traversal.pas` `TestAllowedDevices` (CLI) and the GUI scan thread (2115090).
-- **Hidden-volume filter equivalence:** whether `kCFURLEnumeratorSkipInvisibles` matches Swift's `.skipHiddenVolumes` was not tested.
+- ~~**Hidden-volume filter equivalence**~~ — on this machine both select /, /Volumes/extSSD and ~/OrbStack (2026-10-06); other machines not compared.
 - **Windows and Linux builds (od-31j.13, od-31j.14):** no build was run.
 - **GUI visuals:** light appearance, folder rows, breadcrumbs and the rings chart are checked in window captures (OPENDISK_GUI_SCAN); dark appearance is judged from source only (the host is in Light and no per-process override forces Dark).
 
@@ -231,8 +231,8 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 89 |
-| Partial | 3 | 1 |
+| Done | 42 | 90 |
+| Partial | 2 | 0 |
 | Missing | 1 | 4 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
