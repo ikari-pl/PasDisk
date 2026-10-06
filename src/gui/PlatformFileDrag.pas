@@ -256,7 +256,8 @@ begin
   SizeSize := SizeStr.sizeWithAttributes(SizeAttrs);
 
   if Copy(Item.Path, 1, 2) = '::' then
-    Icon := NSWorkspace.sharedWorkspace.iconForFile(NSStr('/System'))
+    { FileDragLabel: FileIcon.folder for the synthetic folder. }
+    Icon := NSWorkspace.sharedWorkspace.iconForFileType(NSStr('public.folder'))
   else
     Icon := NSWorkspace.sharedWorkspace.iconForFile(NSStr(Item.Path));
 

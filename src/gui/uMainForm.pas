@@ -209,6 +209,7 @@ type
     function ChartDropUpdate(const ScreenPt: TPoint): Boolean;
     procedure ChartDropExit;
     function ChartDrop(const ScreenPt: TPoint): Boolean;
+    function CollectableFiles(const Files: array of TFolderItem): TFolderItems;
     procedure RejectTick(Sender: TObject);
     procedure DragOutTick(Sender: TObject);
     procedure ConfirmHookTick(Sender: TObject);
@@ -1268,6 +1269,7 @@ var
   ShowPath: string;
   StageNames: TStringList;
   DragSample: TDragItem;
+  StageSentinel: array of TFolderItem;
   Staged: TNodeID;
   I: Integer;
 begin
@@ -1313,14 +1315,24 @@ begin
     begin
       StageNames := TStringList.Create;
       try
-        StageNames.CommaText := GetEnvironmentVariable('OPENDISK_GUI_STAGE');
+        { Names may hold spaces: split on commas only. }
+        StageNames.StrictDelimiter := True;
+        StageNames.DelimitedText := GetEnvironmentVariable('OPENDISK_GUI_STAGE');
         for I := 0 to StageNames.Count - 1 do
-        begin
-          Staged := FTree.ChildNamed(RootID, StageNames[I]);
-          if Staged <> NoNode then
-            FCollector.Add(FTree.PathOf(Staged), FTree.NameOf(Staged),
-              FTree.SizeOf(Staged), FTree.IsDirectory(Staged));
-        end;
+          if StageNames[I] = HiddenSpaceSentinelPath then
+          begin
+            { The same expansion a Purgeable Space drop uses. }
+            SetLength(StageSentinel, 1);
+            StageSentinel[0].Path := HiddenSpaceSentinelPath;
+            StageItems(CollectableFiles(StageSentinel));
+          end
+          else
+          begin
+            Staged := FTree.ChildNamed(RootID, StageNames[I]);
+            if Staged <> NoNode then
+              FCollector.Add(FTree.PathOf(Staged), FTree.NameOf(Staged),
+                FTree.SizeOf(Staged), FTree.IsDirectory(Staged));
+          end;
       finally
         StageNames.Free;
       end;
@@ -1912,12 +1924,14 @@ begin
   UpdateBarPhase;
 end;
 
-{ Rows drag as files; synthetic rows (Purgeable Space) do not yet. }
+{ FolderRowView: rows drag as files; of the synthetic rows only Purgeable
+  Space drags (in-app only, expanded on drop). }
 function TMainForm.ListDragItem(Row: Integer; out Item: TDragItem): Boolean;
 var
   F: TFolderItem;
 begin
-  Result := RowItem(Row, F) and (Copy(F.Path, 1, 2) <> '::');
+  Result := RowItem(Row, F) and
+    ((Copy(F.Path, 1, 2) <> '::') or (F.Path = HiddenSpaceSentinelPath));
   if not Result then
     Exit;
   Item.Path := F.Path;
@@ -1933,7 +1947,8 @@ var
 begin
   FDragFiles := nil;
   for I := 0 to High(Rows) do
-    if RowItem(Rows[I], F) and (Copy(F.Path, 1, 2) <> '::') then
+    if RowItem(Rows[I], F) and
+      ((Copy(F.Path, 1, 2) <> '::') or (F.Path = HiddenSpaceSentinelPath)) then
     begin
       SetLength(FDragFiles, Length(FDragFiles) + 1);
       FDragFiles[High(FDragFiles)] := F;
@@ -2065,11 +2080,44 @@ begin
   end;
 end;
 
+{ handleCollectorDrop's expansion: the Purgeable Space sentinel becomes
+  its cache folders (analyzer.collectablePurgeableFiles), and protected
+  paths are left out. }
+function TMainForm.CollectableFiles(const Files: array of TFolderItem): TFolderItems;
+var
+  I, J: Integer;
+  Entries: TCleanableEntries;
+
+  procedure Keep(const Path, Name: string; Size: Int64; IsDirectory: Boolean);
+  begin
+    if IsProtectedPath(Path) then
+      Exit;
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)].Path := Path;
+    Result[High(Result)].Name := Name;
+    Result[High(Result)].Size := Size;
+    Result[High(Result)].IsDirectory := IsDirectory;
+    Result[High(Result)].ItemCount := 0;
+  end;
+
+begin
+  Result := nil;
+  for I := 0 to High(Files) do
+    if Files[I].Path = HiddenSpaceSentinelPath then
+    begin
+      Entries := CleanableCacheEntriesOf(FTree, FRootPath);
+      for J := 0 to High(Entries) do
+        Keep(Entries[J].Path, Entries[J].Name, Entries[J].Size, True);
+    end
+    else
+      Keep(Files[I].Path, Files[I].Name, Files[I].Size, Files[I].IsDirectory);
+end;
+
 { DiskAnalysisView.handleCollectorDrop. }
 function TMainForm.ChartDrop(const ScreenPt: TPoint): Boolean;
 var
   Allowed: array of TFolderItem;
-  I: Integer;
+
 begin
   Result := True;
   if FCollector.IsDraggingOut then
@@ -2084,13 +2132,7 @@ begin
     Exit(False);
   FRejectTimer.Enabled := False;
   FDragReject := '';
-  Allowed := nil;
-  for I := 0 to High(FDragFiles) do
-    if not IsProtectedPath(FDragFiles[I].Path) then
-    begin
-      SetLength(Allowed, Length(Allowed) + 1);
-      Allowed[High(Allowed)] := FDragFiles[I];
-    end;
+  Allowed := CollectableFiles(FDragFiles);
   Result := Length(Allowed) > 0;
   if Result then
     StageItems(Allowed)
@@ -2110,6 +2152,15 @@ begin
   ID := TNodeID(PtrUInt(FList.Items.Objects[Index]));
   if ID <= SearchRowBase then
     Item := FSearchItems[SearchRowBase - ID]
+  else if ID = PurgeableRowID then
+  begin
+    { The HiddenSpaceInfo sentinel: not a path, collected as its folders. }
+    Item.Name := HiddenSpaceFolderName;
+    Item.Path := HiddenSpaceSentinelPath;
+    Item.Size := FPurgeableTotal;
+    Item.IsDirectory := True;
+    Item.ItemCount := FPurgeableCount;
+  end
   else if (ID >= 0) and (FTree <> nil) then
   begin
     Item.Name := FTree.NameOf(ID);
@@ -2157,7 +2208,8 @@ var
 begin
   Handled := True;
   FMenuRow := FList.ItemAtPos(MousePos, True);
-  if not RowItem(FMenuRow, Item) then
+  { menuContent is empty for synthetic rows. }
+  if not RowItem(FMenuRow, Item) or (Copy(Item.Path, 1, 2) = '::') then
     Exit;
   FRowMenu.Items.Clear;
   M := TMenuItem.Create(FRowMenu);
