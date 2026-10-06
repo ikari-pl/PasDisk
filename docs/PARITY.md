@@ -3,9 +3,9 @@
 Checklist for bead `od-31j.17`. It feeds the GUI fidelity epic `od-31j.18`.
 
 - **Swift reference:** `/Users/ikari/src/OpenDisk/OpenDisk/` (paths below are relative to it).
-- **Pascal port:** `src/` in this repo at commit `d4ada94` (2026-10-05). Line numbers refer to
-  that commit, except in rows updated on 2026-10-06, which name units and cite the commit that
-  changed them. Uncommitted work in the checkout is not reflected.
+- **Pascal port:** `src/` in this repo through `HEAD` (2026-10-06). This refresh covers commits
+  `a954d64`, `03f3e12`, `f7ca430`, `fa5f1c2`, `7c1bc91`, `789e599`, and `1fbc7ac`.
+  Uncommitted work in the checkout is not reflected.
 - **Method:** I read both source trees. I did not build or run either app, so visual and runtime
   claims come from the code and from the bead descriptions.
 
@@ -64,8 +64,8 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Live volume refresh | DeviceMonitor.swift:9-17 | gui/uMainForm.pas:254-261, 530-533 (Refresh button) | N/A | Done | od-31j.18.9 | The Swift source has no mount/unmount observer: `refresh()` runs only from `init`. The premise of od-31j.18.9 ("Swift refreshes on mount") is not supported by the source. |
 | Full Disk Access probe (`isGranted`) | Services/FullDiskAccess.swift:11-43 | units/PlatformFullDiskAccess.pas | Done | Done | od-31j.18.12 | 07394ea. Same probe paths and rule. |
 | FDA gate before scanning `/` + retry when the app becomes active | DiskAnalyzer.swift:54-58; Views/Analysis/DiskAnalysisView.swift:147-151 | gui/uMainForm.pas (StartScan, FormActivate) | N/A | Done | od-31j.18.12 | 07394ea. |
-| FDA startup prompt (with suppression), open System Settings, relaunch | FullDiskAccess.swift:46-91; App/OpenDiskApp.swift:46-62 | units/PlatformFullDiskAccess.pas (OpenFullDiskAccessSettings); PlatformShell.pas (LaunchNewInstance) | N/A | Partial | od-31j.18.12 | Open System Settings and Quit & Reopen exist (07394ea); the startup prompt with suppression does not. |
-| Settings window (FDA status, startup toggle, reset suppression) | Views/Settings/SettingsView.swift | — | N/A | Missing | — | |
+| FDA startup prompt (with suppression), open System Settings, relaunch | FullDiskAccess.swift:46-91; App/OpenDiskApp.swift:46-62 | units/PlatformFullDiskAccess.pas (OpenFullDiskAccessSettings); PlatformShell.pas (LaunchNewInstance); gui/FullDiskAccessUI.pas; gui/PlatformAlert.pas | N/A | Done | od-31j.18.12 | Open System Settings and Quit & Reopen (07394ea); the startup prompt with its suppression checkbox, 0.5 s after launch (FullDiskAccessUI, PlatformPreferences). |
+| Settings window (FDA status, startup toggle, reset suppression) | Views/Settings/SettingsView.swift | gui/FullDiskAccessUI.pas (TSettingsWindow); units/PlatformPreferences.pas | N/A | Done | od-31j.18.12 | App menu Settings… (Cmd-,); same preference keys as the Swift app. |
 | Protected paths (system roots, home, ~/Library, /Users/*, /Volumes/*, /System/Volumes/*, ancestors) | Services/ProtectedPaths.swift:3-47 | units/ProtectedPaths.pas:38-133 | Done | Done | od-31j.9, od-31j.26 | Pascal adds a Windows variant (ProtectedPaths.pas:82-110). |
 | Sandbox folder grants (security-scoped bookmarks) | Services/ScanAccess.swift; Views/Main/DevicePickerView.swift:57-92, 109-139 | — | N/A | N/A | — | Applies only to the sandboxed Swift build. The Pascal app is not sandboxed. |
 
@@ -73,29 +73,29 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 
 | Feature | Swift ref | Pascal ref | Engine/CLI | GUI | Bead | Note |
 |---|---|---|---|---|---|---|
-| Name index + multi-token AND match, largest first, 500-result cap, scope All/Folders/Files | Services/Search/SearchIndex.swift:3-247 | units/SearchIndex.pas; opendisk.lpr (CmdSearch) | Done | Missing | od-31j.41, od-31j.18.5 | 93260b8: blob + longest-token sweep, 500-entry heap, size then name, TotalMatches. No GUI search yet. |
-| Case/Unicode folding (`lowercased()` + NFC) | SearchIndex.swift:80-104 | units/SearchIndex.pas (FoldName); PlatformTextFold.pas | Done | Missing | od-31j.41 | 93260b8: CFStringLowercase + NFC on macOS; other systems fold without NFC. |
-| Skip unreachable nodes (detached by incremental updates) | SearchIndex.swift:58 (`reachabilityBitmap`) | units/SearchIndex.pas; FileTree.pas (ReachabilityBitmap) | Done | Missing | od-31j.41 | 93260b8. |
-| Partial-index search while scanning ("results may be incomplete") | DiskAnalyzer.swift:214-216, 323-342; Views/Analysis/SearchResultsView.swift:57-61 | — | N/A | Missing | od-31j.18.5 | |
-| Search UI: toolbar `.searchable`, results list with location line, open result navigates | DiskAnalysisView.swift:152-162, 238-250, 417-424; SearchResultsView.swift | — | N/A | Missing | od-31j.18.5 | |
+| Name index + multi-token AND match, largest first, 500-result cap, scope All/Folders/Files | Services/Search/SearchIndex.swift:3-247 | units/SearchIndex.pas; opendisk.lpr (CmdSearch); gui/SearchController.pas | Done | Done | od-31j.41, od-31j.18.5 | 93260b8 plus a954d64: toolbar search, partial results, location lines, collected-item filtering, and open-to-parent behavior. |
+| Case/Unicode folding (`lowercased()` + NFC) | SearchIndex.swift:80-104 | units/SearchIndex.pas (FoldName); PlatformTextFold.pas; gui/SearchController.pas | Done | Done | od-31j.41, od-31j.18.5 | a954d64 routes GUI queries through the same folded search path. |
+| Skip unreachable nodes (detached by incremental updates) | SearchIndex.swift:58 (`reachabilityBitmap`) | units/SearchIndex.pas; FileTree.pas (ReachabilityBitmap); gui/SearchController.pas | Done | Done | od-31j.41, od-31j.18.5 | a954d64 consumes indexed reachable results in the GUI. |
+| Partial-index search while scanning ("results may be incomplete") | DiskAnalyzer.swift:214-216, 323-342; Views/Analysis/SearchResultsView.swift:57-61 | gui/uMainForm.pas; gui/SearchController.pas | N/A | Done | od-31j.18.5 | a954d64 indexes partial trees and exposes the partial-results state. |
+| Search UI: toolbar `.searchable`, results list with location line, open result navigates | DiskAnalysisView.swift:152-162, 238-250, 417-424; SearchResultsView.swift | gui/uMainForm.pas; gui/SearchController.pas | N/A | Done | od-31j.18.5 | a954d64 adds toolbar search, partial/empty states, location detail, `OPENDISK_GUI_SEARCH`, and result navigation. |
 
 ## 5. Collector & deletion
 
 | Feature | Swift ref | Pascal ref | Engine/CLI | GUI | Bead | Note |
 |---|---|---|---|---|---|---|
-| Stage rules: skip `::` paths and missing paths, block protected paths, dedupe, parent absorbs children | Models/Collector.swift:37-54 | units/Collector.pas:136-188 | Done | Partial | od-31j.9, od-31j.25 | The GUI can stage files only (double-click, uMainForm.pas:761-781). Directories cannot be staged from the GUI. |
+| Stage rules: skip `::` paths and missing paths, block protected paths, dedupe, parent absorbs children | Models/Collector.swift:37-54 | units/Collector.pas:136-188; gui/uMainForm.pas context menu | Done | Done | od-31j.9, od-31j.25, od-31j.50, od-31j.18.6 | Context menu (fa5f1c2) and drag-in (87e2000) stage through AddMany, one undo step per batch (789e599). |
 | Undo stack (max 50, no-op changes not recorded) + Cmd-Z | Collector.swift:27-30, 108-119; DiskAnalysisView.swift:180-186 | units/Collector.pas:110-134, 202-219; gui/uMainForm.pas:550-555 | Done | Done | od-31j.25 | |
-| Blocked-protected notice (banner, auto-hides after 3.5 s) | Collector.swift:56-64; Views/Components/CollectorBar.swift:66-72, 286-297 | units/Collector.pas:146-150; gui/uMainForm.pas:746-751 | Done | Partial | od-31j.18.6 | The notice is appended to the collector label and never times out. |
-| Drag-in drop target (rows and rings → collector) with targeted/rejecting tint | DiskAnalysisView.swift:450-476; CollectorBar.swift:35-41, 113-157; Utilities/FileDrag.swift | — | N/A | Missing | od-31j.18.6 | |
-| Dragged-protected rejection state | Collector.swift:66-75; Views/Components/FolderRowView.swift:24-45 | — | N/A | Missing | od-31j.18.6 | |
-| Expandable staged list (hover), per-row remove, Preview, Show in Finder, Open in Terminal | CollectorBar.swift:30-45, 265-284, 315-403 | — | N/A | Missing | od-31j.18.6, od-31j.18.15 | |
-| Drag out of the collector to unstage (keep zones) | Collector.swift:77-103; CollectorBar.swift:171-175 | — | N/A | Missing | od-31j.18.6 | |
-| Permanent-delete confirmation ("Delete N items?" / "Delete <size>") | CollectorBar.swift:99-110 | gui/uMainForm.pas:832-835 | N/A | Partial | — | Uses a modal `MessageDlg` (Yes/No), not a sheet with a destructive button. The wording differs. |
+| Blocked-protected notice (banner, auto-hides after 3.5 s) | Collector.swift:56-64; Views/Components/CollectorBar.swift:66-72, 286-297 | units/Collector.pas; gui/CollectorBarView.pas; gui/uMainForm.pas | Done | Done | od-31j.18.6 | 03f3e12/f7ca430 provide the floating notice overlay and timed hide. |
+| Drag-in drop target (rows and rings → collector) with targeted/rejecting tint | DiskAnalysisView.swift:450-476; CollectorBar.swift:35-41, 113-157; Utilities/FileDrag.swift | gui/PlatformFileDrag.pas; gui/CollectorBarView.pas; gui/uMainForm.pas | N/A | Done | od-31j.18.6 | Native NSDraggingSession / NSTableView row drags and an in-app-only drop zone (87e2000). Deviation by the owner's decision (39b1d2f): the drop arms only over the bar or within 64 pt above it, not anywhere in the chart pane. Checked by hand. |
+| Dragged-protected rejection state | Collector.swift:66-75; Views/Components/FolderRowView.swift:24-45 | gui/CollectorBarView.pas; gui/uMainForm.pas | N/A | Done | od-31j.18.6 | A drag holding a protected item shows the rejection for up to 4 s; the drop leaves protected items out (87e2000). |
+| Expandable staged list (hover), per-row remove, Preview, Show in Finder, Open in Terminal | CollectorBar.swift:30-45, 265-284, 315-403 | gui/CollectorBarView.pas; gui/uMainForm.pas | N/A | Partial | od-31j.18.6, od-31j.18.15 | Footer/list/row removal (03f3e12, f7ca430); the list scrolls past min(600 pt, the room above the bar) (39b1d2f). Per-row Preview, Show in Finder and Open in Terminal remain open. |
+| Drag out of the collector to unstage (keep zones) | Collector.swift:77-103; CollectorBar.swift:171-175 | units/Collector.pas: BeginDragOut/ResolveDragOut; gui/CollectorBarView.pas; gui/uMainForm.pas | Done | Done | od-31j.18.6 | Engine 789e599; a row or the footer drags out, the list hides, keep zones are the bar and its list, a drop another app takes keeps the items for 2 s (87e2000). Checked by hand. |
+| Permanent-delete confirmation ("Delete N items?" / "Delete <size>") | CollectorBar.swift:99-110 | gui/uMainForm.pas; gui/PlatformAlert.pas | N/A | Done | — | 7c1bc91 uses the native destructive confirmation with Swift's title, message, and Delete-size action. |
 | Delete execution: per-item, off the main thread; failures stay staged; clear undo | Collector.swift:132-160 | units/Collector.pas; PlatformRemove.pas | Done | Done | od-31j.33, od-31j.34, od-31j.46 | Descriptor-relative removal on Unix (7e2c079); background job with failures kept staged (47f956b, GUI 6975b1a). |
 | Delete progress (current name, n of N, freed bytes, bar) | Collector.swift:14-25, 140-142; CollectorBar.swift:204-243 | — | N/A | Done | od-31j.46 | Collector bar: name, n of N, freed, bar (6975b1a). |
-| Done state ("Freed X · N couldn't be removed", 2 s) | CollectorBar.swift:245-263, 299-307 | gui/uMainForm.pas:838-842 (status bar text) | N/A | Partial | od-31j.46 | "Freed X" and the failure count for 2 s (6975b1a); no checkmark symbol and no orange failure colour yet. |
+| Done state ("Freed X · N couldn't be removed", 2 s) | CollectorBar.swift:245-263, 299-307 | gui/CollectorBarView.pas; gui/uMainForm.pas | N/A | Done | od-31j.46 | f7ca430 integrates the collector footer's two-second done state and failure result. |
 | Rescan the root after a delete | DiskAnalysisView.swift:444-448 | gui/uMainForm.pas:843 | N/A | Done | od-31j.11 | |
-| Purgeable/cache synthetic node: "Purgeable Space" row, chart, expands into the collector | Models/HiddenSpace.swift; DiskAnalyzer.swift:137-199, 236-250; DiskAnalysisView.swift:206-210, 465-469 | units/CleanableSpace.pas; PlatformCacheCatalog.pas | Done | Partial | od-31j.20 | Engine 9aa1682; row, view and chart b75146b. Collecting it waits for folder staging in the GUI. |
+| Purgeable/cache synthetic node: "Purgeable Space" row, chart, expands into the collector | Models/HiddenSpace.swift; DiskAnalyzer.swift:137-199, 236-250; DiskAnalysisView.swift:206-210, 465-469 | units/CleanableSpace.pas; PlatformCacheCatalog.pas; gui/uMainForm.pas | Done | Done | od-31j.20 | Row, view and chart; dragging the row to the collector stages its cache folders and hides the row (5b55ea4). |
 
 ## 6. Charts
 
@@ -112,7 +112,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Center label (name + size, falls back to size only) | RingsChartView.swift:281-303 | gui/RingsChart.pas:196-220 | N/A | Done | od-31j.18.4 | Name + size, size only when the name is wider than 1.7x the inner radius (e7f6b71). |
 | Continued-edge arc for hidden children | RingsChartView.swift:194-207 | gui/PlatformChartCanvas.pas (StrokeContinuedEdge) | N/A | Done | od-31j.18.11 | ba740bb: Core Graphics arc. |
 | Click: center → back, directory → navigate | RingsChartView.swift:35-44 | gui/RingsChart.pas:329-343; uMainForm.pas:783-793 | N/A | Done | od-31j.11 | Pascal checks `DirectoryExists` on disk instead of the segment kind. |
-| Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | — | N/A | Missing | od-31j.18.6 | The context menu has no bead (see Gaps). |
+| Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | gui/RingsChart.pas (OnDragSegment); gui/uMainForm.pas | N/A | Partial | od-31j.18.6 | Segment drag (depth ≥ 1, file or folder) since 87e2000. The segment context menu has no bead (see Gaps). |
 | Chart accessibility (label + per-segment elements/actions) | RingsChartView.swift:57-94 | — | N/A | Missing | — | |
 | Coalesced chart rebuild; "Building chart…" placeholder | DiskAnalyzer.swift:256-281; DiskAnalysisView.swift:430-439 | gui/RingsChart.pas:281-287 ("Rings appear after a scan.") | N/A | Partial | od-31j.18.4 | |
 | SVG/HTML rings export (`opendisk view`) | — | units/RingsSVG.pas; opendisk.lpr:258-292 | N/A | N/A | — | Pascal only. |
@@ -132,11 +132,11 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Navigating to an unscanned path triggers a scan of it | DiskAnalysisView.swift:569-574 | — | N/A | Missing | — | |
 | List/chart split 60/40, resizable, minimum widths | DiskAnalysisView.swift:51-67 | gui/uMainForm.pas:343-348 (fixed 440 px, no splitter) | N/A | Partial | od-31j.18.4 | |
 | Folder rows: file icon, name weight, "N items", size bar, size, chevron, hover/selection | Views/Components/FolderRowView.swift:47-121; Views/Analysis/ScanResultsView.swift | gui/uMainForm.pas ListDrawItem | N/A | Done | od-31j.18.3, od-31j.18.17 | Native path icons since 6975b1a. |
-| Sortable Name/Size column header | DiskAnalysisView.swift:216-228, 340-375 | — | N/A | Missing | od-31j.18.3 | |
-| Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | — | N/A | Missing | od-31j.18.16 | |
-| Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | — | N/A | Missing | — | |
-| Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | — | N/A | Missing | — | |
-| Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | — | N/A | Missing | — | |
+| Sortable Name/Size column header | DiskAnalysisView.swift:216-228, 340-375 | gui/uMainForm.pas sort header and visible-list sorting | N/A | Done | od-31j.18.3 | 1fbc7ac adds active chevrons, Swift default directions, and sorting after collector filtering. |
+| Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | gui/uMainForm.pas list selection/context menu | N/A | Done | od-31j.18.16 | Native table selection since 39b1d2f (the hand-rolled Shift/Cmd handling of 1fbc7ac toggled Cmd-clicks back); fa5f1c2 adds Add N Selected. |
+| Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | gui/uMainForm.pas; units/PlatformShell.pas | N/A | Partial | od-31j.50 | fa5f1c2 adds Add, Add Selected, Show in Finder, and Copy Path. Quick Look and menu icons remain open. |
+| Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | — | N/A | Missing | — | Still open; not implied by the context menu. |
+| Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | gui/PlatformFileDrag.pas | N/A | Partial | od-31j.18.6 | Rows and segments export file URLs, copy or move outside the app (87e2000; checked by hand). The refresh after a move (filesMovedNotification) is not ported. |
 | Display limits: 100 children below the root, hide < 1 KiB | DiskAnalyzer.swift:7-8, 344-368 | gui/uMainForm.pas:717-729 (shows every child > 0 bytes) | N/A | Done | od-31j.48 | a5de8ce. |
 | Skeleton listing before the first results | DiskAnalyzer.swift:89-96, 370-417 | — | N/A | Missing | — | |
 | Scanning placeholder ("Preparing scan…") | DiskAnalysisView.swift:80-83 | gui/uMainForm.pas:600 (crumb text) | N/A | Partial | od-31j.18.4 | |
@@ -144,7 +144,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Scan status bar: phase text, progress bar vs. used space, files/sec, "Scanned in", total · items | Views/Components/ScanStatusBar.swift:15-77; DiskAnalysisView.swift:484-487 | gui/uMainForm.pas:618-620, 650-655 (`TStatusBar` simple text) | N/A | Done | od-31j.18.7 | 5ae2396; checking-changes phase since 9b2f060. |
 | Status bar capacity readout (bar + "X available of Y", purgeable tooltip, a11y) | ScanStatusBar.swift:60-112; DiskAnalysisView.swift:134-137, 489-494 | gui/uMainForm.pas:650-653 (text "volume used / total") | N/A | Partial | od-31j.18.7 | Bar, text and hint (5ae2396); no accessibility element. |
 | Semantic system colors (light/dark) | Swift uses system materials throughout | gui/uMainForm.pas, RingsChart.pas, GuiColors.pas, PlatformAppearance.pas | N/A | Done | od-31j.18.10 | d2ba636. Dark mode judged from source (host in Light). |
-| Typography/spacing tokens | — | gui/uMainForm.pas (ad-hoc sizes) | N/A | Missing | od-31j.18.8 | |
+| Typography/spacing tokens | SwiftUI styles in the referenced views; CLAUDE.md spacing scale | gui/DesignTokens.pas; listed GUI units | N/A | Done | od-31j.18.8 | c188a17. Sizes measured from NSFont.preferredFont(forTextStyle:) on macOS. |
 | Restrained motion (hover fades, collector drawer, chart transition) | CollectorBar.swift:89-95; ScanResultsView.swift:29 | — | N/A | Missing | od-31j.18.15 | |
 | Thread-safe scan state handoff | DiskAnalyzer.swift:99-103 (MainActor hop) | gui/uMainForm.pas:126-170, 611-626 | N/A | Done | od-31j.38 | 2115090. |
 | Byte formatting (`ByteCountFormatter` `.file` = decimal; GB/TB no fraction on devices) | Utilities/Formatters.swift:4-31 | units/Formatters.pas; units/PlatformLocale.pas | Done | Done | od-31j.40 | b2e9e18: matches 360 values from the real ByteCountFormatter (en_US, en_PL), locale separators. |
@@ -200,22 +200,23 @@ Engine/CLI:
 10. ~~Volume list sorted by path (§3).~~ — fixed (od-31j.47, 18aa155).
 
 GUI:
-11. Settings window: FDA status, startup prompt toggle (§3).
+11. ~~Settings window: FDA status, startup prompt toggle (§3).~~ — implemented in FullDiskAccessUI/PlatformPreferences (05ef23f, 2464e82).
 12. ~~Deletion progress UI and running deletion off the UI thread (§5).~~ — fixed (od-31j.46).
-13. Delete confirmation as a native sheet with Swift wording (§5).
-14. Staging directories from the GUI (§5).
-15. Row and segment context menus: Add to Collector, Quick Look, Show in Finder, Copy Path (§6, §7).
+13. ~~Delete confirmation as a native sheet with Swift wording (§5).~~ — fixed by 7c1bc91.
+14. ~~Staging directories from the GUI (§5).~~ — context menu (fa5f1c2), drag-in (87e2000), Purgeable Space (5b55ea4).
+15. Row and segment context menus: Add to Collector, Quick Look, Show in Finder, Copy Path (§6, §7). Row menu is partial: Quick Look and menu icons remain open.
 16. Quick Look (§7).
-17. Drag rows out to Finder, with refresh on move (§7).
+17. Refresh after rows are moved out to Finder (§7). Dragging out (87e2000) and collector drag-out are done.
 18. ~~Display limits: top 100 below the root, hide < 1 KiB (§7).~~ — fixed (od-31j.48).
 19. Skeleton listing before results (§7).
 20. Navigating to an unscanned path triggers a scan (§7).
 21. ~~Refresh rescans the current folder, not the root (§7).~~ — fixed (od-31j.18.2).
 22. Chart accessibility (§6).
+23. ~~Purgeable Space collecting into the collector (§5).~~ — 5b55ea4.
 
 Distribution:
-23. Move-to-Applications prompt (§8).
-24. Sparkle updates (§8).
+24. Move-to-Applications prompt (§8).
+25. Sparkle updates (§8).
 
 ## Unverified items
 
@@ -230,10 +231,10 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 40 | 55 |
-| Partial | 3 | 15 |
-| Missing | 1 | 24 |
-| N/A | 59 | 9 |
+| Done | 41 | 73 |
+| Partial | 3 | 13 |
+| Missing | 1 | 8 |
+| N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 
-Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. Partial snapshots and the purgeable node are not finished. Most remaining work is GUI fidelity and interaction (od-31j.18.*).
+Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. Open: Quick Look, collector row actions, menu icons, the segment context menu and the refresh after a move to Finder.
