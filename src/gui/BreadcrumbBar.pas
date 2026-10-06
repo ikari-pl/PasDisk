@@ -56,7 +56,7 @@ type
 implementation
 
 uses
-  GuiColors, TextTrim;
+  GuiColors, TextTrim, DesignTokens;
 
 const
   PadX = 6;       { BreadcrumbLink .padding(.horizontal, 6) }
@@ -153,7 +153,7 @@ var
 
   function TextW(const S: string; Bold: Boolean): Integer;
   begin
-    Canvas.Font.Size := FontPt;
+    ApplyTextStyle(Canvas.Font, tsSubheadline); { BreadcrumbBar text style }
     if Bold then
       Canvas.Font.Style := [fsBold]
     else
@@ -260,7 +260,7 @@ begin
   Wash := RGBToColor((Red(Secondary) + 5 * Red(Bg)) div 6,
     (Green(Secondary) + 5 * Green(Bg)) div 6, (Blue(Secondary) + 5 * Blue(Bg)) div 6);
   MidY := ClientHeight div 2;
-  Canvas.Font.Size := FontPt;
+  ApplyTextStyle(Canvas.Font, tsSubheadline); { BreadcrumbBar text style }
   for I := 0 to High(FSegments) do
   begin
     S := FSegments[I];

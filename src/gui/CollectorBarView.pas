@@ -109,7 +109,7 @@ type
 implementation
 
 uses
-  LCLType, LCLIntf, PlatformImages, GuiColors, Formatters, TextTrim;
+  LCLType, LCLIntf, PlatformImages, GuiColors, Formatters, TextTrim, DesignTokens;
 
 const
   Radius = 16;
@@ -123,9 +123,9 @@ const
   SystemGreen = TColor($0059C734);
   SystemOrange = TColor($000095FF);
   { .callout / .headline / .caption on macOS. }
-  CalloutSize = 12;
-  HeadlineSize = 13;
-  CaptionSize = 10;
+  CalloutSize = 12; { .callout, CollectorBar.swift:197-200 }
+  HeadlineSize = 13; { .headline, CollectorBar.swift:162-165 }
+  CaptionSize = 10; { .caption, CollectorBar.swift:166-168 }
 
 function Blend(A, B: TColor; T: Double): TColor;
 begin

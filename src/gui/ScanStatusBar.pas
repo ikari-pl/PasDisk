@@ -68,7 +68,7 @@ type
 implementation
 
 uses
-  LCLType, LCLIntf, GuiColors, Formatters, PlatformLocale;
+  LCLType, LCLIntf, GuiColors, Formatters, PlatformLocale, DesignTokens;
 
 const
   FootnoteSize = 10;
@@ -399,7 +399,7 @@ begin
   end;
 
   Canvas.Brush.Style := bsClear;
-  Canvas.Font.Size := FootnoteSize;
+  ApplyTextStyle(Canvas.Font, tsFootnote); { ScanStatusBar.swift:72-74 }
   Canvas.Font.Style := [];
   TextH := FootnoteLine;
   TextY := RowTop + PadV;

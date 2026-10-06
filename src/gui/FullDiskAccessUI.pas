@@ -32,7 +32,7 @@ implementation
 
 uses
   PlatformAlert, PlatformFullDiskAccess, PlatformPreferences, PlatformImages,
-  GuiColors;
+  GuiColors, DesignTokens;
 
 const
   { System green / orange (reserved for success and warning states). }
@@ -179,8 +179,7 @@ begin
   L.Parent := Panel;
   L.Left := 22;
   L.Top := 2;
-  L.Font.Size := 13;
-  L.Font.Style := [fsBold];
+  ApplyTextStyle(L.Font, tsHeadline); { SettingsView section heading }
   L.Caption := Title;
   Result := Panel;
 end;

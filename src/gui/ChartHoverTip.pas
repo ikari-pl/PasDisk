@@ -5,7 +5,7 @@ unit ChartHoverTip;
 interface
 
 uses
-  Classes, SysUtils, Graphics, Math, GuiColors;
+  Classes, SysUtils, Graphics, Math, GuiColors, DesignTokens;
 
 procedure DrawChartHoverTip(ACanvas: TCanvas; const Name: string; Size: Int64;
   FractionOfRoot: Double; PointerX, PointerY, BoundsWidth, BoundsHeight: Integer);
@@ -52,7 +52,7 @@ begin
   { min(280, bounds.width - padding * 2) }
   MaxW := Max(40, Min(MaxTextWidth, BoundsWidth - PadX * 2));
   ACanvas.Font.Name := '';
-  ACanvas.Font.Size := 10;
+  ApplyTextStyle(ACanvas.Font, tsCaption); { ChartHoverTip.swift:15-17 }
   ACanvas.Font.Style := [fsBold];
   { Names are file names: shorten in the middle so the start and the
     extension stay visible, and never draw past the pill. }
@@ -60,7 +60,7 @@ begin
   TitleW := ACanvas.TextWidth(Title);
   TitleH := ACanvas.TextHeight(Title);
   ACanvas.Font.Style := [];
-  ACanvas.Font.Size := 9;
+  ApplyTextStyle(ACanvas.Font, tsCaption2); { ChartHoverTip.swift:20-24 }
   Detail := FitMiddle(ACanvas, Detail, MaxW);
   DetailW := ACanvas.TextWidth(Detail);
   DetailH := ACanvas.TextHeight(Detail);

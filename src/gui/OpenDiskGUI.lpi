@@ -76,6 +76,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="DesignTokens.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="../units/FileTree.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

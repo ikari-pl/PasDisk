@@ -8,7 +8,7 @@ interface
 
 uses
   Classes, SysUtils, Math, Graphics, Controls, ChartItem, Formatters, RingsLayout,
-  GuiColors, PlatformChartCanvas, ChartHoverTip;
+  GuiColors, PlatformChartCanvas, ChartHoverTip, DesignTokens;
 
 type
   TRingSelectEvent = procedure(Sender: TObject; const Path: string;
@@ -312,7 +312,7 @@ var
   Fill, Ink: TColor;
 const
   { SwiftUI .caption2 on macOS. }
-  LabelFontSize = 10;
+  LabelFontSize = 10; { .caption2, RingsChartView.swift:246-254 }
 begin
   if Seg.Depth = 0 then
   begin
@@ -351,7 +351,7 @@ begin
       segment's own fill that is the fill scaled to a quarter. }
     Fill := ColorToRGB(ColorFor(Seg.ColorPosition, Seg.Depth, False));
     Ink := RGBToColor(Red(Fill) div 4, Green(Fill) div 4, Blue(Fill) div 4);
-    ACanvas.Font.Size := LabelFontSize;
+    ApplyTextStyle(ACanvas.Font, tsCaption2); { RingsChartView.swift:246-254 }
     ACanvas.Font.Style := [];
     ACanvas.Brush.Style := bsClear;
     LabelWidth := ACanvas.TextWidth(Seg.Name);
