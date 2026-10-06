@@ -88,7 +88,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Blocked-protected notice (banner, auto-hides after 3.5 s) | Collector.swift:56-64; Views/Components/CollectorBar.swift:66-72, 286-297 | units/Collector.pas; gui/CollectorBarView.pas; gui/uMainForm.pas | Done | Done | od-31j.18.6 | 03f3e12/f7ca430 provide the floating notice overlay and timed hide. |
 | Drag-in drop target (rows and rings → collector) with targeted/rejecting tint | DiskAnalysisView.swift:450-476; CollectorBar.swift:35-41, 113-157; Utilities/FileDrag.swift | gui/PlatformFileDrag.pas; gui/CollectorBarView.pas; gui/uMainForm.pas | N/A | Done | od-31j.18.6 | Native NSDraggingSession / NSTableView row drags and an in-app-only drop zone (87e2000). Deviation by the owner's decision (39b1d2f): the drop arms only over the bar or within 64 pt above it, not anywhere in the chart pane. Checked by hand. |
 | Dragged-protected rejection state | Collector.swift:66-75; Views/Components/FolderRowView.swift:24-45 | gui/CollectorBarView.pas; gui/uMainForm.pas | N/A | Done | od-31j.18.6 | A drag holding a protected item shows the rejection for up to 4 s; the drop leaves protected items out (87e2000). |
-| Expandable staged list (hover), per-row remove, Preview, Show in Finder, Open in Terminal | CollectorBar.swift:30-45, 265-284, 315-403 | gui/CollectorBarView.pas; gui/uMainForm.pas | N/A | Partial | od-31j.18.6, od-31j.18.15 | Footer/list/row removal (03f3e12, f7ca430); the list scrolls past min(600 pt, the room above the bar) (39b1d2f). Per-row Preview, Show in Finder and Open in Terminal remain open. |
+| Expandable staged list (hover), per-row remove, Preview, Show in Finder, Open in Terminal | CollectorBar.swift:30-45, 265-284, 315-403 | gui/CollectorBarView.pas; gui/uMainForm.pas; units/PlatformShell.pas (OpenTerminalAt) | N/A | Done | od-31j.18.6, od-31j.18.15 | Footer/list/row removal (03f3e12, f7ca430); scrolling list (39b1d2f); row menu Preview / Show in Finder / Open in Terminal / Remove (760a651). Preview uses the Quick Look panel where Swift opens a QuickLookSheet; the menu shows no keyboard hints. |
 | Drag out of the collector to unstage (keep zones) | Collector.swift:77-103; CollectorBar.swift:171-175 | units/Collector.pas: BeginDragOut/ResolveDragOut; gui/CollectorBarView.pas; gui/uMainForm.pas | Done | Done | od-31j.18.6 | Engine 789e599; a row or the footer drags out, the list hides, keep zones are the bar and its list, a drop another app takes keeps the items for 2 s (87e2000). Checked by hand. |
 | Permanent-delete confirmation ("Delete N items?" / "Delete <size>") | CollectorBar.swift:99-110 | gui/uMainForm.pas; gui/PlatformAlert.pas | N/A | Done | — | 7c1bc91 uses the native destructive confirmation with Swift's title, message, and Delete-size action. |
 | Delete execution: per-item, off the main thread; failures stay staged; clear undo | Collector.swift:132-160 | units/Collector.pas; PlatformRemove.pas | Done | Done | od-31j.33, od-31j.34, od-31j.46 | Descriptor-relative removal on Unix (7e2c079); background job with failures kept staged (47f956b, GUI 6975b1a). |
@@ -112,7 +112,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Center label (name + size, falls back to size only) | RingsChartView.swift:281-303 | gui/RingsChart.pas:196-220 | N/A | Done | od-31j.18.4 | Name + size, size only when the name is wider than 1.7x the inner radius (e7f6b71). |
 | Continued-edge arc for hidden children | RingsChartView.swift:194-207 | gui/PlatformChartCanvas.pas (StrokeContinuedEdge) | N/A | Done | od-31j.18.11 | ba740bb: Core Graphics arc. |
 | Click: center → back, directory → navigate | RingsChartView.swift:35-44 | gui/RingsChart.pas:329-343; uMainForm.pas:783-793 | N/A | Done | od-31j.11 | Pascal checks `DirectoryExists` on disk instead of the segment kind. |
-| Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | gui/RingsChart.pas (OnDragSegment); gui/uMainForm.pas | N/A | Partial | od-31j.18.6 | Segment drag (depth ≥ 1, file or folder) since 87e2000. The segment context menu has no bead (see Gaps). |
+| Drag a segment to the collector; segment context menu (Add, Show in Finder, Copy Path) | RingsChartView.swift:45-56, 96-126; Views/Components/FileActionsMenu.swift | gui/RingsChart.pas (OnDragSegment, DraggableSegmentAt); gui/uMainForm.pas | N/A | Done | od-31j.18.6 | Segment drag (87e2000) and FileActionsMenu on draggable segments (616c3cf). |
 | Chart accessibility (label + per-segment elements/actions) | RingsChartView.swift:57-94 | — | N/A | Missing | — | |
 | Coalesced chart rebuild; "Building chart…" placeholder | DiskAnalyzer.swift:256-281; DiskAnalysisView.swift:430-439 | gui/RingsChart.pas:281-287 ("Rings appear after a scan.") | N/A | Partial | od-31j.18.4 | |
 | SVG/HTML rings export (`opendisk view`) | — | units/RingsSVG.pas; opendisk.lpr:258-292 | N/A | N/A | — | Pascal only. |
@@ -134,8 +134,8 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Folder rows: file icon, name weight, "N items", size bar, size, chevron, hover/selection | Views/Components/FolderRowView.swift:47-121; Views/Analysis/ScanResultsView.swift | gui/uMainForm.pas ListDrawItem | N/A | Done | od-31j.18.3, od-31j.18.17 | Native path icons since 6975b1a. |
 | Sortable Name/Size column header | DiskAnalysisView.swift:216-228, 340-375 | gui/uMainForm.pas sort header and visible-list sorting | N/A | Done | od-31j.18.3 | 1fbc7ac adds active chevrons, Swift default directions, and sorting after collector filtering. |
 | Multi-select (Shift range, Cmd toggle) + "Add N Selected" | DiskAnalysisView.swift:377-415; FolderRowView.swift:160-171 | gui/uMainForm.pas list selection/context menu | N/A | Done | od-31j.18.16 | Native table selection since 39b1d2f (the hand-rolled Shift/Cmd handling of 1fbc7ac toggled Cmd-clicks back); fa5f1c2 adds Add N Selected. |
-| Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | gui/uMainForm.pas; units/PlatformShell.pas | N/A | Partial | od-31j.50 | fa5f1c2 adds Add, Add Selected, Show in Finder, and Copy Path. Quick Look and menu icons remain open. |
-| Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | — | N/A | Missing | — | Still open; not implied by the context menu. |
+| Row context menu (Add to Collector, Quick Look, Show in Finder, Copy Path) | FolderRowView.swift:150-196 | gui/uMainForm.pas; units/PlatformShell.pas | N/A | Partial | od-31j.50 | Add, Add N Selected, Show in Finder, Copy Path (fa5f1c2), Quick Look (476d552). Menu items have no SF Symbol icons. |
+| Quick Look (Space, centered panel) | DiskAnalysisView.swift:123-128, 265-338 | gui/PlatformQuickLook.pas; gui/uMainForm.pas | N/A | Done | — | 476d552: Space toggles for the selected row, arrow keys move through the visible rows, centred on the window. |
 | Drag rows out to Finder (move → refresh) | Utilities/FileDrag.swift:44-115; DiskAnalysisView.swift:167-169 | gui/PlatformFileDrag.pas; gui/uMainForm.pas (FileDragEnded) | N/A | Done | od-31j.18.6 | Rows and segments export file URLs, copy or move outside the app (87e2000; checked by hand); when a dragged file is gone after the drop, the view refreshes (filesMovedNotification). |
 | Display limits: 100 children below the root, hide < 1 KiB | DiskAnalyzer.swift:7-8, 344-368 | gui/uMainForm.pas:717-729 (shows every child > 0 bytes) | N/A | Done | od-31j.48 | a5de8ce. |
 | Skeleton listing before the first results | DiskAnalyzer.swift:89-96, 370-417 | — | N/A | Missing | — | |
@@ -204,8 +204,8 @@ GUI:
 12. ~~Deletion progress UI and running deletion off the UI thread (§5).~~ — fixed (od-31j.46).
 13. ~~Delete confirmation as a native sheet with Swift wording (§5).~~ — fixed by 7c1bc91.
 14. ~~Staging directories from the GUI (§5).~~ — context menu (fa5f1c2), drag-in (87e2000), Purgeable Space (5b55ea4).
-15. Row and segment context menus: Add to Collector, Quick Look, Show in Finder, Copy Path (§6, §7). Row menu is partial: Quick Look and menu icons remain open.
-16. Quick Look (§7).
+15. Row and segment context menus (§6, §7): done (fa5f1c2, 616c3cf, 476d552) except SF Symbol icons on the items.
+16. ~~Quick Look (§7).~~ — 476d552.
 17. ~~Drag rows out to Finder, with refresh on move (§7).~~ — 87e2000 and the move refresh.
 18. ~~Display limits: top 100 below the root, hide < 1 KiB (§7).~~ — fixed (od-31j.48).
 19. Skeleton listing before results (§7).
@@ -231,10 +231,10 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 41 | 74 |
-| Partial | 3 | 12 |
-| Missing | 1 | 8 |
+| Done | 41 | 77 |
+| Partial | 3 | 10 |
+| Missing | 1 | 7 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 
-Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. Open: Quick Look, collector row actions, menu icons, the segment context menu and the Finder drags.
+Engine/CLI is mostly at parity; scan topology, parallel workers, I/O tuning, the unreadable count and search now match. The GUI now has name search, sortable/multi-select folder lists, the row context menu, the collector (footer, scrolling list, notices, native delete confirmation, drag in and out, Purgeable Space), typography tokens, Settings and the FDA prompt. It also has Quick Look and the row, segment and collector menus. Open: SF Symbol icons and keyboard hints in menus, and the Quick Look sheet for collector previews.
