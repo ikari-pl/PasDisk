@@ -157,7 +157,7 @@ noted. **Missing** = no counterpart. **N/A** = does not apply to this column or 
 | Windows build (CLI, GUI if feasible) | — | Windows branches in DirReader/PlatformVolumes/PlatformRemove/PlatformFS | Unverified | Unverified | od-31j.13 | Code paths exist. No build was run. |
 | Linux build | — | Unix branches as above | Unverified | Unverified | od-31j.14 | No build was run. |
 | `.app` bundle + icon | App target (Xcode) | — | N/A | Done | od-31j.16 | 3a9c45f (`make app`). |
-| Move-to-Applications prompt / translocation handling | App/MoveToApplications.swift | — | N/A | Missing | — | Swift runs it only when Sparkle is linked. |
+| Move-to-Applications prompt / translocation handling | App/MoveToApplications.swift | src/gui/PlatformMoveToApplications.pas | N/A | Done | — | Port: translocation -> strip quarantine + relaunch from the original (once); outside an Applications folder -> alert with Don't ask again, move (or copy+trash) into /Applications or ~/Applications, trashing an existing copy, strip quarantine, relaunch after exit. Swift runs it only with Sparkle and not in DEBUG/DerivedData; here always, except for a bundle inside a source checkout. Owner-verified move + relaunch 2026-10-07. |
 | Sparkle "Check for Updates…" | App/SoftwareUpdater.swift; DevicePickerView.swift:94-107 | — | N/A | Missing | — | Distribution feature. |
 | `RemoveItem` hardening (O_NOFOLLOW dir open, iterative) | — (Swift uses `FileManager.removeItem`) | units/PlatformRemove.pas:28-85 | Partial | N/A | od-31j.34 | Hardening goes beyond Swift; not a parity requirement. |
 
@@ -231,9 +231,9 @@ Each table row has two cells: one for Engine/CLI and one for GUI. These counts t
 
 | Status | Engine/CLI | GUI |
 |---|---|---|
-| Done | 42 | 91 |
+| Done | 42 | 92 |
 | Partial | 2 | 0 |
-| Missing | 1 | 3 |
+| Missing | 1 | 2 |
 | N/A | 58 | 9 |
 | Unverified | 2 | 2 |
 

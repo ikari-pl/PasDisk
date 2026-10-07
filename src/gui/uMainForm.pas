@@ -18,7 +18,8 @@ uses
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
   PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing,
   PlatformListBatch, PlatformChartAccessibility, Motion, PlatformMotion,
-  PlatformChartCanvas, PlatformListTransition, PlatformUpdater;
+  PlatformChartCanvas, PlatformListTransition, PlatformMoveToApplications,
+  PlatformUpdater;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -1123,6 +1124,13 @@ begin
   if (GetEnvironmentVariable('OPENDISK_GUI_SCAN') <> '') or
     (GetEnvironmentVariable('OPENDISK_GUI_NO_VOLUMES') <> '') then
     Exit;
+  { MoveToApplications.promptIfNeeded comes first; it relaunches the app
+    from its new place. }
+  if PromptMoveToApplicationsIfNeeded then
+  begin
+    Application.Terminate;
+    Exit;
+  end;
   PromptForFullDiskAccessAtStartup;
 end;
 

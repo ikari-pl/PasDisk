@@ -96,6 +96,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="PlatformMoveToApplications.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="PlatformUpdater.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>
