@@ -18,7 +18,7 @@ uses
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
   PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing,
   PlatformListBatch, PlatformChartAccessibility, Motion, PlatformMotion,
-  PlatformChartCanvas, PlatformListTransition;
+  PlatformChartCanvas, PlatformListTransition, PlatformUpdater;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -80,6 +80,9 @@ type
     FVolList: TListBox;
     FFolderBtn: TButton;
   FRefreshVolBtn: TButton;
+    { DevicePickerView CheckForUpdatesButton; hidden without Sparkle. }
+    FUpdatesBtn: TButton;
+    FUpdatesItem: TMenuItem;
     FPickerState: TEmptyStateView;
     { Replaces the list and chart: FDA required, unreadable, empty. }
     FAnalysisState: TEmptyStateView;
@@ -318,6 +321,9 @@ type
     procedure FormResize(Sender: TObject);
     procedure FormActivate(Sender: TObject);
     procedure SettingsClick(Sender: TObject);
+    procedure CheckForUpdatesClick(Sender: TObject);
+    procedure AppMenuClick(Sender: TObject);
+    procedure UpdateUpdaterState;
     procedure StartupPromptTick(Sender: TObject);
     procedure BuildMenus;
     procedure SearchChange(Sender: TObject);
@@ -528,6 +534,8 @@ begin
   OnKeyDown := @FormKeyDown;
   OnResize := @FormResize;
   OnActivate := @FormActivate;
+  { SoftwareUpdater.controller: started with the app. }
+  StartUpdater;
   BuildMenus;
   { OpenDiskApp.checkFullDiskAccessAtStartup: once, 0.5 s after the
     window appears. }
@@ -678,6 +686,14 @@ begin
   FRefreshVolBtn.Height := 32;
   FRefreshVolBtn.OnClick := @RefreshVolClick;
 
+  FUpdatesBtn := TButton.Create(Self);
+  FUpdatesBtn.Parent := FPicker;
+  FUpdatesBtn.Caption := 'Check for Updates…';
+  FUpdatesBtn.Top := 570;
+  FUpdatesBtn.Width := 160;
+  FUpdatesBtn.Height := 32;
+  FUpdatesBtn.OnClick := @CheckForUpdatesClick;
+  FUpdatesBtn.Visible := False;
 
   { --- Analysis --- }
   FAnalysis := TPanel.Create(Self);
@@ -929,6 +945,9 @@ begin
   FVolList.Height := Max(200, Height - 260);
   FFolderBtn.Top := FVolList.Top + FVolList.Height + 12;
   FRefreshVolBtn.Top := FFolderBtn.Top;
+  { Spacer(), then the button at the column's trailing edge. }
+  FUpdatesBtn.Top := FFolderBtn.Top;
+  FUpdatesBtn.Left := FVolList.Left + FVolList.Width - FUpdatesBtn.Width;
   FPickerState.BoundsRect := FVolList.BoundsRect;
 end;
 
@@ -1044,12 +1063,46 @@ begin
   AppMenu := TMenuItem.Create(AppMainMenu);
   AppMenu.Caption := #$EF#$A3#$BF;
   AppMainMenu.Items.Add(AppMenu);
+  AppMenu.OnClick := @AppMenuClick;
+  { CommandGroup(after: .appInfo): Check for Updates… right after About,
+    when Sparkle is there. }
+  if UpdaterAvailable then
+  begin
+    FUpdatesItem := TMenuItem.Create(AppMainMenu);
+    FUpdatesItem.Caption := 'Check for Updates…';
+    FUpdatesItem.OnClick := @CheckForUpdatesClick;
+    AppMenu.Add(FUpdatesItem);
+  end;
   Item := TMenuItem.Create(AppMainMenu);
   Item.Caption := 'Settings…';
   Item.ShortCut := ShortCut(VK_OEM_COMMA, [ssMeta]);
   Item.OnClick := @SettingsClick;
   AppMenu.Add(Item);
   Menu := AppMainMenu;
+end;
+
+procedure TMainForm.CheckForUpdatesClick(Sender: TObject);
+begin
+  CheckForUpdates;
+end;
+
+{ .disabled(!viewModel.canCheckForUpdates): refreshed when the app menu
+  opens and when the picker shows (Sparkle reports no change event we can
+  observe here). }
+procedure TMainForm.AppMenuClick(Sender: TObject);
+begin
+  UpdateUpdaterState;
+end;
+
+procedure TMainForm.UpdateUpdaterState;
+var
+  Can: Boolean;
+begin
+  Can := CanCheckForUpdates;
+  if FUpdatesItem <> nil then
+    FUpdatesItem.Enabled := Can;
+  FUpdatesBtn.Visible := UpdaterAvailable;
+  FUpdatesBtn.Enabled := Can;
 end;
 
 procedure TMainForm.SettingsClick(Sender: TObject);
@@ -1116,6 +1169,7 @@ begin
   FPicker.Visible := True;
   FPicker.BringToFront;
   Caption := 'PasDisk';
+  UpdateUpdaterState;
   ShowWindowToolbar(Self, False);
   SetWindowSubtitle(Self, '');
 end;

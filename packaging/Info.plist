@@ -42,6 +42,10 @@
 	<string>PasDisk measures how much disk space each folder on your Mac uses. Access to your photo library lets PasDisk include it in your storage breakdown - for example, showing that your Photos library takes up 20 GB so you can decide what to clean up. OpenDisk only reads file names and sizes; it never views, uploads, or modifies your photos.</string>
 	<key>NSPrincipalClass</key>
 	<string>TCocoaApplication</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/ikari-pl/PasDisk/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>ZgYR+NLWoTEWcNobQvROZyINwrDTjmcWrk6y0JtPSek=</string>
 	<key>NSRemovableVolumesUsageDescription</key>
 	<string>PasDisk measures how much disk space each folder uses. Access to removable volumes lets PasDisk scan external drives and USB disks you plug in - for example, showing that an external drive holds 200 GB of old projects. OpenDisk only reads file names and sizes; it never uploads or modifies your files.</string>
 </dict>

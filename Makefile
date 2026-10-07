@@ -51,14 +51,36 @@ APP = PasDisk.app
 APP_ICON ?= packaging/PasDisk.icns
 SIGN_IDENTITY ?= $(or $(shell security find-identity -v -p codesigning 2>/dev/null | \
 	sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1),-)
-app: gui packaging/Info.plist $(APP_ICON)
+# Sparkle (software updates, src/gui/PlatformUpdater.pas): the release
+# archive is fetched once, checked against its SHA-256, and the framework
+# is embedded in the bundle. Its nested helpers are re-signed inside out
+# with our identity, as Sparkle documents for Developer ID apps.
+SPARKLE_VERSION = 2.10.0
+SPARKLE_SHA256 = c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
+SPARKLE_DIR = build/sparkle
+SPARKLE_FW = $(SPARKLE_DIR)/Sparkle.framework
+$(SPARKLE_FW):
+	mkdir -p $(SPARKLE_DIR)
+	curl -sSfL -o $(SPARKLE_DIR)/Sparkle.tar.xz \
+	  https://github.com/sparkle-project/Sparkle/releases/download/$(SPARKLE_VERSION)/Sparkle-$(SPARKLE_VERSION).tar.xz
+	echo "$(SPARKLE_SHA256)  $(SPARKLE_DIR)/Sparkle.tar.xz" | shasum -a 256 -c -
+	tar -xf $(SPARKLE_DIR)/Sparkle.tar.xz -C $(SPARKLE_DIR)
+
+SIGN = codesign --force --options runtime --timestamp=none --sign "$(SIGN_IDENTITY)"
+app: gui packaging/Info.plist $(APP_ICON) $(SPARKLE_FW)
 	rm -rf $(APP)
-	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources $(APP)/Contents/Frameworks
 	cp pasdisk-gui $(APP)/Contents/MacOS/PasDisk
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
 	cp $(APP_ICON) $(APP)/Contents/Resources/PasDisk.icns
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
-	codesign --force --options runtime --timestamp=none --sign "$(SIGN_IDENTITY)" $(APP)
+	ditto $(SPARKLE_FW) $(APP)/Contents/Frameworks/Sparkle.framework
+	$(SIGN) $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
+	$(SIGN) --preserve-metadata=entitlements $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
+	$(SIGN) $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate
+	$(SIGN) $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app
+	$(SIGN) $(APP)/Contents/Frameworks/Sparkle.framework
+	$(SIGN) $(APP)
 	codesign --verify --strict $(APP)
 	plutil -lint $(APP)/Contents/Info.plist
 
