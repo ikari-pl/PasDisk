@@ -18,7 +18,7 @@ uses
   CollectorBarView, PlatformAlert, PlatformFileDrag, RingsLayout,
   PlatformQuickLook, ThinSplitter, PlatformToolbar, PlatformMenus, SkeletonListing,
   PlatformListBatch, PlatformChartAccessibility, Motion, PlatformMotion,
-  PlatformChartCanvas;
+  PlatformChartCanvas, PlatformListTransition;
 
 type
   TUIMode = (umPicker, umScanning, umAnalysis);
@@ -119,6 +119,15 @@ type
     { Largest size among the listed children (ScanResultsView.swift maxSize)
       and the row under the pointer, -1 for none. }
     FListMaxSize: Int64;
+    { Size capsules: each row's shown fraction, by path, eased to the new
+      value when a scan update changes it (FolderRowView's
+      .frame(width:) under ScanResultsView .snappy(0.18)). }
+    FBarKeys: TStringList;
+    FBars: array of TAnimatedValue;
+    FBarsUntil: QWord;
+    { While the list-transition snapshot is drawn: capsules at their new
+      widths (the overlay covers their easing, then reveals them landed). }
+    FBarsAtTarget: Boolean;
     FListHover: Integer;
     { HoverHighlight: each row's wash fades over 0.15 s (easeInOut). }
     FHoverRows: array of Integer;
@@ -126,6 +135,9 @@ type
     FHoverClock: TFrameClock;
     { Paths listed by the previous refresh, sorted; nil before the first. }
     FListPaths: TStringList;
+    { Each listed row's path, by row index, as of the last refresh or
+      sort: the rows' keys even after the tree behind them is replaced. }
+    FRowKeys: array of string;
     { Many new rows (a new folder) share FAppearAll; a few fade per row. }
     FAppearAll: TAnimatedValue;
     { Per-path fades: rows are re-sorted between refreshes, and a scan
@@ -203,7 +215,10 @@ type
     procedure RebuildList;
     { ScanResultsView .animation(.snappy(duration: 0.18), value:
       displayVersion): rows that were not listed before fade in. }
-    procedure StartRowAppearances;
+    procedure StartRowAppearances(StartFades: Boolean = True);
+    procedure RecordRowKeys;
+    function BarFraction(Index: Integer; Target: Double): Double;
+    function VisibleRowPlaces: TRowPlaces;
     function AppearAmount(Row: Integer; NowMs: QWord): Double;
     procedure RefreshCollector;
     procedure VolListDrawItem(Control: TWinControl; Index: Integer;
@@ -264,6 +279,8 @@ type
     procedure QuickLookHookTick(Sender: TObject);
     procedure A11yDumpTick(Sender: TObject);
     procedure ListHoverHookTick(Sender: TObject);
+    procedure SortClickHookTick(Sender: TObject);
+    procedure ResizeHookTick(Sender: TObject);
     procedure CollectorRowMenu(Sender: TObject; const Path: string;
       const ScreenPt: TPoint);
     procedure CollectorPreviewClick(Sender: TObject);
@@ -1335,6 +1352,8 @@ procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   FreeAndNil(FHoverClock);
   FreeAndNil(FListPaths);
+  FreeAndNil(FBarKeys);
+  CancelListTransition;
   StopWatchingAppearance;
   CancelScan;
   FSearch.Free;
@@ -1656,6 +1675,24 @@ begin
         OnTimer := @ListHoverHookTick;
         Enabled := True;
       end;
+    { Automation: OPENDISK_GUI_RESIZE=1 widens the window by 40 pt 2 s
+      after launch (LCL queues its resize events through the app object). }
+    if GetEnvironmentVariable('OPENDISK_GUI_RESIZE') = '1' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 2000;
+        OnTimer := @ResizeHookTick;
+        Enabled := True;
+      end;
+    { Automation: OPENDISK_GUI_SORT_CLICK=1 clicks the Name header 1.5 s
+      after the scan (rows re-sort and slide). }
+    if GetEnvironmentVariable('OPENDISK_GUI_SORT_CLICK') = '1' then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 1500;
+        OnTimer := @SortClickHookTick;
+        Enabled := True;
+      end;
     { Automation: OPENDISK_GUI_MENU=<row> opens that row's context menu. }
     if GetEnvironmentVariable('OPENDISK_GUI_MENU') <> '' then
       with TTimer.Create(Self) do
@@ -1967,13 +2004,127 @@ begin
     FScanBar.ClearVolumeCapacity;
 end;
 
+{ ScanResultsView's .snappy(0.18) list animation: when visible rows move
+  or go away, the list is snapshotted before and after and an overlay
+  animates between them (rows slide, departed rows fade out, new ones
+  fade in); otherwise only new rows fade in. Not with Reduce Motion. }
 procedure TMainForm.RefreshList;
+var
+  Animate: Boolean;
 begin
+  Animate := FList.HandleAllocated and FList.IsVisible and not ReduceMotion and
+    (FList.Items.Count > 0) and (Length(FRowKeys) = FList.Items.Count);
+  if Animate then
+    CaptureListBefore(FList, VisibleRowPlaces);
   RebuildList;
+  if Animate then
+  begin
+    { The "after" snapshot must show the rows themselves, uncovered. }
+    FAppearAll := AnimatedAt(1);
+    FAppearPaths := nil;
+    FAppearFades := nil;
+    RecordRowKeys;
+    FBarsAtTarget := True;
+    try
+      Animate := AnimateListAfter(FList, VisibleRowPlaces, 180, CPanel);
+    finally
+      FBarsAtTarget := False;
+    end;
+    if Animate then
+    begin
+      StartRowAppearances(False);
+      Exit;
+    end;
+  end;
   StartRowAppearances;
 end;
 
-procedure TMainForm.StartRowAppearances;
+{ The capsule fraction to draw for row Index now: a row seen before eases
+  from what it showed to Target; a new row starts at Target. }
+function TMainForm.BarFraction(Index: Integer; Target: Double): Double;
+var
+  K: Integer;
+  NowMs: QWord;
+begin
+  Result := Target;
+  if (Index > High(FRowKeys)) or (FRowKeys[Index] = '') then
+    Exit;
+  if FBarKeys = nil then
+  begin
+    FBarKeys := TStringList.Create;
+    FBarKeys.Sorted := True;
+    FBarKeys.Duplicates := dupIgnore;
+  end;
+  NowMs := GetTickCount64;
+  if not FBarKeys.Find(FRowKeys[Index], K) then
+  begin
+    SetLength(FBars, Length(FBars) + 1);
+    FBars[High(FBars)] := AnimatedAt(Target);
+    FBarKeys.AddObject(FRowKeys[Index], TObject(PtrInt(High(FBars))));
+    Exit;
+  end;
+  K := PtrInt(FBarKeys.Objects[K]);
+  if not SameValue(FBars[K].ToValue, Target, 1e-4) then
+  begin
+    if ReduceMotion then
+      FBars[K] := AnimatedAt(Target)
+    else
+    begin
+      Retarget(FBars[K], Target, NowMs, 180, eaSnappy);
+      if GetEnvironmentVariable('OPENDISK_DEBUG_MOTION') = '1' then
+        WriteLn(Format('bar %s: %.3f -> %.3f', [ExtractFileName(FRowKeys[Index]),
+          FBars[K].FromValue, Target]));
+      FBarsUntil := Max(FBarsUntil, NowMs + 180);
+      if FHoverClock = nil then
+        FHoverClock := TFrameClock.Create(FList, @HoverFrame);
+      FHoverClock.Start;
+    end;
+  end;
+  if not FBarsAtTarget then
+    Result := ValueAt(FBars[K], NowMs);
+end;
+
+procedure TMainForm.RecordRowKeys;
+var
+  I: Integer;
+  Item: TFolderItem;
+begin
+  SetLength(FRowKeys, FList.Items.Count);
+  for I := 0 to FList.Items.Count - 1 do
+    if RowItem(I, Item) then
+      FRowKeys[I] := Item.Path
+    else
+      FRowKeys[I] := '';
+end;
+
+{ The rows on screen now: key and place in the list's client area. }
+function TMainForm.VisibleRowPlaces: TRowPlaces;
+var
+  I, N, Last: Integer;
+  R: TRect;
+begin
+  Result := nil;
+  if (FList.Items.Count = 0) or (FList.ItemHeight <= 0) then
+    Exit;
+  Last := Min(FList.Items.Count - 1, FList.TopIndex + FList.ClientHeight div FList.ItemHeight + 1);
+  SetLength(Result, Max(0, Last - FList.TopIndex + 1));
+  N := 0;
+  for I := Max(0, FList.TopIndex) to Last do
+  begin
+    if (I > High(FRowKeys)) or (FRowKeys[I] = '') then
+      Continue;
+    R := FList.ItemRect(I);
+    if (R.Bottom <= 0) or (R.Top >= FList.ClientHeight) then
+      Continue;
+    Result[N].Key := FRowKeys[I];
+    Result[N].Top := R.Top;
+    Result[N].Height := R.Bottom - R.Top;
+    Inc(N);
+  end;
+  SetLength(Result, N);
+end;
+
+procedure TMainForm.StartRowAppearances(StartFades: Boolean);
 const
   { More new rows than this fade together, as a whole new listing. }
   SharedFade = 50;
@@ -2000,7 +2151,8 @@ begin
     end;
   FreeAndNil(FListPaths);
   FListPaths := Fresh;
-  if (Length(NewPaths) = 0) or ReduceMotion then
+  RecordRowKeys;
+  if not StartFades or (Length(NewPaths) = 0) or ReduceMotion then
     Exit;
   NowMs := GetTickCount64;
   if Length(NewPaths) > SharedFade then
@@ -2264,6 +2416,7 @@ begin
     FList.Items.EndUpdate;
     EndListBatch(FList);
   end;
+  RecordRowKeys;
 end;
 
 { The table selects natively (click, Shift range, Cmd toggle, and a
@@ -2901,6 +3054,18 @@ begin
   CollectorRemove(nil, FMenuItem.Path);
 end;
 
+procedure TMainForm.ResizeHookTick(Sender: TObject);
+begin
+  (Sender as TTimer).Enabled := False;
+  Width := Width + 40;
+end;
+
+procedure TMainForm.SortClickHookTick(Sender: TObject);
+begin
+  (Sender as TTimer).Enabled := False;
+  SortNameClick(nil);
+end;
+
 procedure TMainForm.ListHoverHookTick(Sender: TObject);
 begin
   (Sender as TTimer).Enabled := False;
@@ -3191,7 +3356,7 @@ begin
     C.Pen.Style := psClear;
     C.Brush.Color := Tertiary;
     C.RoundRect(Cap, CapsuleH, CapsuleH);
-    W := Round(CapsuleW * Frac);
+    W := Round(CapsuleW * BarFraction(Index, Frac));
     if W < 3 then
       W := 3;
     Fill := Rect(CapLeft, Cap.Top, CapLeft + W, Cap.Bottom);
@@ -3371,6 +3536,12 @@ begin
   end;
   SetLength(FHoverRows, N);
   SetLength(FHoverFades, N);
+  { Easing size capsules: repaint until the last lands (once more after). }
+  if FBarsUntil + 40 > NowMs then
+  begin
+    FList.Invalidate;
+    Moving := Moving or (FBarsUntil > NowMs);
+  end;
   if not Moving then
     FHoverClock.Stop;
 end;

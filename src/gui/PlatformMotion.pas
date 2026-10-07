@@ -121,13 +121,14 @@ begin
   if Link <> nil then
   begin
     TMsgVoid(@objc_msgSend)(id(Link), sel_registerName('invalidate'));
-    NSObject(Link).release;
+    { Autoreleased: Stop may run inside this link's own callback. }
+    NSObject(Link).autorelease;
     Link := nil;
   end;
   if Target <> nil then
   begin
     TODFrameTarget(Target).FClock := nil;
-    TODFrameTarget(Target).release;
+    TODFrameTarget(Target).autorelease;
     Target := nil;
   end;
 end;

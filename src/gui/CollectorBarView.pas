@@ -42,6 +42,14 @@ type
   TCollectorRowMenuEvent = procedure(Sender: TObject; const Path: string;
     const ScreenPt: TPoint) of object;
 
+  { .contentTransition(.numericText()): a number rolling from its old
+    text to the new one. }
+  TRollingText = record
+    Anim: TAnimatedValue;
+    OldText: string;
+    Up: Boolean;
+  end;
+
   TCollectorBarView = class;
 
   { A floating rounded panel above the footer: the staged list or the
@@ -112,16 +120,19 @@ type
     FTintColor: TColor;
     { .contentTransition(.numericText()) with .spring(0.3) on the count:
       the total rolls from the old text to the new (up when it grows). }
-    FTotalRoll: TAnimatedValue;
-    FOldTotalText: string;
-    FRollUp: Boolean;
+    FTotalRoll: TRollingText;
+    { The freed bytes while deleting (.snappy(0.25) on deletionProgress). }
+    FFreedRoll: TRollingText;
+    procedure StartRoll(var Roll: TRollingText; const OldText: string; Up: Boolean;
+      DurationMs: Integer; Easing: TEasing);
     function TintColorFor(Phase: TCollectorPhase): TColor;
     procedure ShowOverlay(O: TCollectorOverlay; const R: TRect);
     procedure HideOverlay(O: TCollectorOverlay);
     procedure PlaceOverlay(O: TCollectorOverlay; NowMs: QWord);
     procedure MotionFrame(Sender: TObject);
     procedure StartMotion;
-    procedure DrawRollingTotal(C: TCanvas; X, Y: Integer; const NewText: string);
+    procedure DrawRolling(C: TCanvas; X, Y: Integer; const NewText: string;
+      const Roll: TRollingText);
     procedure CollapseTick(Sender: TObject);
     procedure NoticeTick(Sender: TObject);
     procedure SpinTick(Sender: TObject);
@@ -690,7 +701,7 @@ begin
         C.Font.Style := [fsBold];
         C.Font.Color := Ink;
         Y := Panel.Top + PadV;
-        DrawRollingTotal(C, X, Y, FormatFileSize(TotalBytes));
+        DrawRolling(C, X, Y, FormatFileSize(TotalBytes), FTotalRoll);
         Inc(Y, C.TextHeight('Ag') + 1);
         C.Font.Size := CaptionSize;
         C.Font.Style := [];
@@ -747,7 +758,7 @@ begin
         C.Font.Style := [fsBold];
         C.Font.Color := Ink;
         S := FormatFileSize(FFreedBytes);
-        C.TextOut(W, Y + 17, S);
+        DrawRolling(C, W, Y + 17, S, FFreedRoll);
         Inc(W, C.TextWidth(S));
         C.Font.Style := [];
         C.Font.Color := Secondary;
@@ -880,35 +891,47 @@ begin
   end;
 end;
 
-{ numericText: while rolling, the old total leaves its line (up when the
+procedure TCollectorBarView.StartRoll(var Roll: TRollingText; const OldText: string;
+  Up: Boolean; DurationMs: Integer; Easing: TEasing);
+begin
+  if ReduceMotion then
+    Exit;
+  Roll.OldText := OldText;
+  Roll.Up := Up;
+  Roll.Anim := AnimatedAt(0);
+  Retarget(Roll.Anim, 1, GetTickCount64, DurationMs, Easing);
+  StartMotion;
+end;
+
+{ numericText: while rolling, the old text leaves its line (up when the
   value grew, down when it shrank) as the new one comes in, both clipped
   to the line. }
-procedure TCollectorBarView.DrawRollingTotal(C: TCanvas; X, Y: Integer;
-  const NewText: string);
+procedure TCollectorBarView.DrawRolling(C: TCanvas; X, Y: Integer;
+  const NewText: string; const Roll: TRollingText);
 var
   P: Double;
   H, Shift, Dir: Integer;
   Line: TRect;
 begin
-  P := ValueAt(FTotalRoll, GetTickCount64);
-  if (P >= 1) or (FOldTotalText = '') then
+  P := ValueAt(Roll.Anim, GetTickCount64);
+  if (P >= 1) or (Roll.OldText = '') then
   begin
     C.TextOut(X, Y, NewText);
     Exit;
   end;
   H := C.TextHeight('Ag');
-  Line := Rect(X, Y, X + Max(C.TextWidth(NewText), C.TextWidth(FOldTotalText)) + 2, Y + H);
+  Line := Rect(X, Y, X + Max(C.TextWidth(NewText), C.TextWidth(Roll.OldText)) + 2, Y + H);
   if GetEnvironmentVariable('OPENDISK_DEBUG_MOTION') = '1' then
   begin
-    WriteLn(Format('roll %.3f: "%s" -> "%s"', [P, FOldTotalText, NewText]));
+    WriteLn(Format('roll %.3f: "%s" -> "%s"', [P, Roll.OldText, NewText]));
     Flush(Output);
   end;
-  if FRollUp then
+  if Roll.Up then
     Dir := -1
   else
     Dir := 1;
   Shift := Round(P * H);
-  C.TextRect(Line, X, Y + Dir * Shift, FOldTotalText);
+  C.TextRect(Line, X, Y + Dir * Shift, Roll.OldText);
   C.TextRect(Line, X, Y + Dir * Shift - Dir * H, NewText);
 end;
 
@@ -925,9 +948,11 @@ var
   Moving: Boolean;
 begin
   NowMs := GetTickCount64;
-  Moving := not AtRest(FTint, NowMs) or not AtRest(FTotalRoll, NowMs);
+  Moving := not AtRest(FTint, NowMs) or not AtRest(FTotalRoll.Anim, NowMs) or
+    not AtRest(FFreedRoll.Anim, NowMs);
   if Moving or (FTint.StartMs + QWord(FTint.DurationMs) + 50 > NowMs) or
-    (FTotalRoll.StartMs + QWord(FTotalRoll.DurationMs) + 50 > NowMs) then
+    (FTotalRoll.Anim.StartMs + QWord(FTotalRoll.Anim.DurationMs) + 50 > NowMs) or
+    (FFreedRoll.Anim.StartMs + QWord(FFreedRoll.Anim.DurationMs) + 50 > NowMs) then
     Invalidate;
   if (FList <> nil) and FList.Visible then
   begin
@@ -1094,15 +1119,9 @@ var
 begin
   OldTotal := TotalBytes;
   FItems := Copy(Items);
-  if (OldTotal <> TotalBytes) and (FormatFileSize(OldTotal) <> FormatFileSize(TotalBytes)) and
-    (OldTotal > 0) and (TotalBytes > 0) and not ReduceMotion then
-  begin
-    FOldTotalText := FormatFileSize(OldTotal);
-    FRollUp := TotalBytes > OldTotal;
-    FTotalRoll := AnimatedAt(0);
-    Retarget(FTotalRoll, 1, GetTickCount64, 300, eaSpring);
-    StartMotion;
-  end;
+  if (FormatFileSize(OldTotal) <> FormatFileSize(TotalBytes)) and
+    (OldTotal > 0) and (TotalBytes > 0) then
+    StartRoll(FTotalRoll, FormatFileSize(OldTotal), TotalBytes > OldTotal, 300, eaSpring);
   UpdateHeight;
   if WantsList then
     UpdateOverlays
@@ -1155,6 +1174,9 @@ procedure TCollectorBarView.SetDeletionProgress(const CurrentName: string;
   FreedBytes: Int64; Completed, Total: Integer);
 begin
   FDeletingName := CurrentName;
+  if (FreedBytes > FFreedBytes) and (FFreedBytes > 0) and
+    (FormatFileSize(FreedBytes) <> FormatFileSize(FFreedBytes)) then
+    StartRoll(FFreedRoll, FormatFileSize(FFreedBytes), True, 250, eaSnappy);
   FFreedBytes := FreedBytes;
   FCompleted := Completed;
   FTotal := Total;

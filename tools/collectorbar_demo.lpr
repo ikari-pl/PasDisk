@@ -9,8 +9,18 @@ type
   TRollTimer = class(TTimer)
   public
     Bar: TCollectorBarView;
+    Step: Integer;
     procedure Tick(Sender: TObject);
+    procedure FreedTick(Sender: TObject);
   end;
+
+procedure TRollTimer.FreedTick(Sender: TObject);
+begin
+  Inc(Step);
+  Bar.SetDeletionProgress('archive.zip', Step * 1700000, Step, 6);
+  if Step >= 5 then
+    Enabled := False;
+end;
 
 procedure TRollTimer.Tick(Sender: TObject);
 var
@@ -71,6 +81,18 @@ begin
     Roll.Bar := Bar;
     Roll.Interval := 800;
     Roll.OnTimer := @Roll.Tick;
+    Roll.Enabled := True;
+  end;
+  { 'freed': deleting, the freed bytes grow every 0.4 s (they roll). }
+  if State = 'freed' then
+  begin
+    Bar.SetItems(Items);
+    Bar.SetPhase(cbDeleting);
+    Bar.SetDeletionProgress('report.pdf', 420000, 1, 6);
+    Roll := TRollTimer.Create(Form);
+    Roll.Bar := Bar;
+    Roll.Interval := 400;
+    Roll.OnTimer := @Roll.FreedTick;
     Roll.Enabled := True;
   end;
   Form.Show; Application.Run;
