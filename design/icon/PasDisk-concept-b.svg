@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff1c9"/><stop offset="1" stop-color="#f0b85a"/></linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff5e76"/><stop offset="1" stop-color="#8e42e8"/></linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="214" fill="url(#tile)"/>
+  <path d="M512 168L817 344v352L512 872 207 696V344z" fill="#fff" opacity=".25"/>
+  <g transform="translate(512 516)">
+    <path d="M0-326L86-86 326 0 86 86 0 326-86 86-326 0-86-86z" fill="url(#core)"/>
+    <path d="M0-326L86-86 0 0-86-86z" fill="#ffdb70"/>
+    <path d="M326 0L86 86 0 0 86-86z" fill="#45d4be"/>
+    <path d="M0 326L-86 86 0 0 86 86z" fill="#4e8cff"/>
+    <path d="M-326 0L-86-86 0 0-86 86z" fill="#ff7183"/>
+    <circle r="108" fill="#1d2944"/>
+    <circle r="68" fill="#f9f3dc"/>
+    <circle r="22" fill="#1d2944"/>
+  </g>
+  <path d="M244 786l268 154 268-154" fill="none" stroke="#9c6b25" stroke-opacity=".22" stroke-width="10"/>
+</svg>

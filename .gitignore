@@ -58,3 +58,6 @@ build/
 /pasdisk
 /pasdisk-gui
 /PasDisk.app/
+/pasdisk-gui.app/
+/packaging/PasDisk.iconset/
+.omc/

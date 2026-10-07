@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>PasDisk — orbit P</title>
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#192c43"/><stop offset="1" stop-color="#091522"/>
+    </linearGradient>
+    <linearGradient id="orbit" gradientUnits="userSpaceOnUse" x1="320" y1="190" x2="780" y2="620">
+      <stop stop-color="#64e5bf"/><stop offset=".52" stop-color="#58b4f7"/><stop offset="1" stop-color="#a183f5"/>
+    </linearGradient>
+    <linearGradient id="stem" gradientUnits="userSpaceOnUse" x1="320" y1="395" x2="320" y2="800">
+      <stop stop-color="#64e5bf"/><stop offset="1" stop-color="#35bda3"/>
+    </linearGradient>
+  </defs>
+  <!-- Inset tile and original continuous-corner geometry; transparent outer margin. -->
+  <path d="M290 64H734C899 64 960 125 960 290V734C960 899 899 960 734 960H290C125 960 64 899 64 734V290C64 125 125 64 290 64Z" fill="url(#tile)"/>
+  <!-- The stem shares the bowl's left tangent and 80-point stroke. -->
+  <path d="M290 700V400" fill="none" stroke="url(#stem)" stroke-width="80" stroke-linecap="round"/>
+  <circle cx="560" cy="400" r="270" fill="none" stroke="url(#orbit)" stroke-width="80"/>
+  <!-- Short nested arcs retain the original orbit idea within a single P silhouette. -->
+  <circle cx="560" cy="400" r="158" fill="none" stroke="#294963" stroke-width="44"/>
+  <path d="M560 242A158 158 0 0 1 718 400" fill="none" stroke="#f6c96c" stroke-width="44" stroke-linecap="round"/>
+  <path d="M560 558A158 158 0 0 1 402 400" fill="none" stroke="#6addc4" stroke-width="44" stroke-linecap="round"/>
+  <circle cx="560" cy="400" r="62" fill="#f5f8fc"/>
+  <circle cx="560" cy="400" r="25" fill="#142a3d"/>
+</svg>

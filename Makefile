@@ -43,8 +43,9 @@ gui: src/gui/OpenDiskGUI.lpi tools/ldwrap/ld
 # one it is ad-hoc signed, and each build needs the grant again.
 # Override with `make app SIGN_IDENTITY=-` (ad-hoc) or another identity.
 APP = PasDisk.app
-# The app icon; the designer's own PasDisk icon replaces it (od-31j.55).
-APP_ICON ?= packaging/OpenDisk.icns
+# The app icon: PasDisk's own (design/icon/PasDisk.svg, built by
+# design/icon/PasDisk-icon-build.sh; od-31j.55).
+APP_ICON ?= packaging/PasDisk.icns
 SIGN_IDENTITY ?= $(or $(shell security find-identity -v -p codesigning 2>/dev/null | \
 	sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1),-)
 app: gui packaging/Info.plist $(APP_ICON)
