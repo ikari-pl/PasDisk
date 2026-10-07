@@ -12,7 +12,10 @@ UNIVINT ?=
 LDWRAP = $(CURDIR)/tools/ldwrap
 BUILDFLAGS = -Mobjfpc -Scghi -O2 -g -gl -Fi$(UNITDIR) -Fu$(UNITDIR) \
 	$(if $(UNIVINT),-Fu$(UNIVINT)) \
-	-k'-framework CoreFoundation' -k'-framework CoreServices' -FE. -FU.
+	-k'-framework CoreFoundation' -k'-framework CoreServices' -FE. -FU$(UNITOUT)
+# Compiled units (.o/.ppu) of the CLI and tests, out of the source tree.
+UNITOUT = build/units
+$(shell mkdir -p $(UNITOUT))
 
 .PHONY: all clean test gui app check-platform cli-win64 cli-linux64
 
@@ -242,4 +245,4 @@ clean:
 		tests/test_traversal tests/test_volumeroot tests/test_texttrim \
 		tests/test_formatters tests/test_search tests/test_remove tests/test_cleanable tests/test_topology tests/test_deletejob tests/test_displaylist tests/test_preferences tests/test_searchcontroller tests/test_skeleton tests/test_motion *.o *.ppu $(UNITDIR)/*.o $(UNITDIR)/*.ppu \
 		tests/*.o tests/*.ppu link*.res linkfiles*.res ppas.sh
-	rm -rf src/gui/lib $(APP)
+	rm -rf build src/gui/lib $(APP) pasdisk-gui.app opendisk-gui.app
