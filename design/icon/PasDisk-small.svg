@@ -5,9 +5,9 @@
   </defs>
   <path d="M290 64H734C899 64 960 125 960 290V734C960 899 899 960 734 960H290C125 960 64 899 64 734V290C64 125 125 64 290 64Z" fill="#112438"/>
   <!-- Wider strokes and one nested arc prevent a noisy bullseye at 16 points. -->
-  <path d="M290 680V400" fill="none" stroke="#70efc9" stroke-width="104" stroke-linecap="round"/>
-  <circle cx="560" cy="400" r="270" fill="none" stroke="url(#orbit)" stroke-width="104"/>
-  <path d="M560 270A130 130 0 0 1 690 400" fill="none" stroke="#ffcf72" stroke-width="40" stroke-linecap="round"/>
-  <circle cx="560" cy="400" r="62" fill="#f5f8fc"/>
-  <circle cx="560" cy="400" r="25" fill="#112438"/>
+  <path d="M242 812V512" fill="none" stroke="#70efc9" stroke-width="104" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="270" fill="none" stroke="url(#orbit)" stroke-width="104"/>
+  <path d="M512 382A130 130 0 0 1 642 512" fill="none" stroke="#ffcf72" stroke-width="40" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="62" fill="#f5f8fc"/>
+  <circle cx="512" cy="512" r="25" fill="#112438"/>
 </svg>

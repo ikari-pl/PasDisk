@@ -14,12 +14,12 @@
   <!-- Inset tile and original continuous-corner geometry; transparent outer margin. -->
   <path d="M290 64H734C899 64 960 125 960 290V734C960 899 899 960 734 960H290C125 960 64 899 64 734V290C64 125 125 64 290 64Z" fill="url(#tile)"/>
   <!-- The stem shares the bowl's left tangent and 80-point stroke. -->
-  <path d="M290 700V400" fill="none" stroke="url(#stem)" stroke-width="80" stroke-linecap="round"/>
-  <circle cx="560" cy="400" r="270" fill="none" stroke="url(#orbit)" stroke-width="80"/>
+  <path d="M242 812V512" fill="none" stroke="url(#stem)" stroke-width="80" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="270" fill="none" stroke="url(#orbit)" stroke-width="80"/>
   <!-- Short nested arcs retain the original orbit idea within a single P silhouette. -->
-  <circle cx="560" cy="400" r="158" fill="none" stroke="#294963" stroke-width="44"/>
-  <path d="M560 242A158 158 0 0 1 718 400" fill="none" stroke="#f6c96c" stroke-width="44" stroke-linecap="round"/>
-  <path d="M560 558A158 158 0 0 1 402 400" fill="none" stroke="#6addc4" stroke-width="44" stroke-linecap="round"/>
-  <circle cx="560" cy="400" r="62" fill="#f5f8fc"/>
-  <circle cx="560" cy="400" r="25" fill="#142a3d"/>
+  <circle cx="512" cy="512" r="158" fill="none" stroke="#294963" stroke-width="44"/>
+  <path d="M512 354A158 158 0 0 1 670 512" fill="none" stroke="#f6c96c" stroke-width="44" stroke-linecap="round"/>
+  <path d="M512 670A158 158 0 0 1 354 512" fill="none" stroke="#6addc4" stroke-width="44" stroke-linecap="round"/>
+  <circle cx="512" cy="512" r="62" fill="#f5f8fc"/>
+  <circle cx="512" cy="512" r="25" fill="#142a3d"/>
 </svg>
