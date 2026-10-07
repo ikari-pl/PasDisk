@@ -379,12 +379,14 @@ begin
 end;
 
 { One frame of chart motion, drawn directly (the static layer holds only
-  the resting chart). Labels and hover wait until it lands. }
+  the resting chart). The hover highlight and labels move with their
+  segments, so scan updates neither blink the labels nor flash the
+  hovered colour; labels of segments still fading in wait. }
 procedure TRingsChart.PaintMotion(const R: TRect);
 var
   P, T: Double;
   I: Integer;
-  G: TRingGeometry;
+  G, Keep: TRingGeometry;
   Seg: TRingSegment;
   Border: TColor;
 begin
@@ -393,13 +395,16 @@ begin
   T := 1;
   if FMotion.DurationMs > 0 then
     T := Min(1, (GetTickCount64 - FMotion.StartMs) / (FMotion.DurationMs * ChartFadeOutShare));
-  DrawBackground(Canvas, R);
+  { The fills go through the same layer as the resting chart, so a frame
+    renders exactly like the chart at rest (drawing straight onto the
+    canvas darkened the edges). }
   Border := ColorToRGB(clBtnShadow);
+  FStaticLayer.BeginStatic;
   for I := 0 to High(FDeparted) do
   begin
-    SetCanvasAlpha(Canvas, 1 - T);
+    FStaticLayer.SetAlpha(1 - T);
     G := FDeparted[I].Geometry;
-    FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY, G.RIn, G.ROut,
+    FStaticLayer.FillSector(FLayout.CenterX, FLayout.CenterY, G.RIn, G.ROut,
       G.A0, G.A0 + G.Sweep, FDeparted[I].Color, Border, 1);
   end;
   for I := 0 to FLayout.Segments.Count - 1 do
@@ -407,17 +412,71 @@ begin
     Seg := TRingSegment(FLayout.Segments[I]);
     G := ShownGeometry(I, P);
     if (I <= High(FFadeIn)) and FFadeIn[I] then
-      SetCanvasAlpha(Canvas, P)
+      FStaticLayer.SetAlpha(P)
     else
-      SetCanvasAlpha(Canvas, 1);
+      FStaticLayer.SetAlpha(1);
     if (G.Sweep >= 2 * Pi - 1e-6) and (G.RIn <= 0.5) then
-      FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY, 0, G.ROut,
-        0, 2 * Pi, ShownColor(I, P), Border, 1)
+      FStaticLayer.FillDisk(FLayout.CenterX, FLayout.CenterY, G.ROut,
+        ShownColor(I, P), Border, 1)
     else
-      FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY, G.RIn, G.ROut,
+      FStaticLayer.FillSector(FLayout.CenterX, FLayout.CenterY, G.RIn, G.ROut,
         G.A0, G.A0 + G.Sweep, ShownColor(I, P), Border, 1);
   end;
-  SetCanvasAlpha(Canvas, 1);
+  FStaticLayer.SetAlpha(1);
+  FStaticLayer.EndStatic;
+  { Not the resting chart: rebuilt when the motion lands. }
+  FStaticLayer.Valid := True;
+  FStaticLayer.DrawTo(Canvas);
+  FStaticLayer.Valid := False;
+  for I := 0 to FLayout.Segments.Count - 1 do
+  begin
+    Seg := TRingSegment(FLayout.Segments[I]);
+    if (FHoverPath = '') or (Seg.Path <> FHoverPath) or (Seg.Depth = 0) then
+      Continue;
+    G := ShownGeometry(I, P);
+    FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY, G.RIn, G.ROut,
+      G.A0, G.A0 + G.Sweep, ColorFor(Seg.ColorPosition, Seg.Depth, True), Border, 1);
+    Break;
+  end;
+  { Labels at the shown geometry: the segment's fields are lent the
+    in-flight shape for DrawSegmentLabels and restored. }
+  for I := 0 to FLayout.Segments.Count - 1 do
+  begin
+    if (I <= High(FFadeIn)) and FFadeIn[I] then
+      Continue;
+    Seg := TRingSegment(FLayout.Segments[I]);
+    G := ShownGeometry(I, P);
+    Keep := GeometryOf(Seg);
+    if Seg.Depth > 0 then
+    begin
+      Seg.StartAngle := G.A0;
+      Seg.Sweep := G.Sweep;
+      Seg.InnerRadius := G.RIn;
+    end;
+    Seg.OuterRadius := G.ROut;
+    try
+      DrawSegmentLabels(Canvas, Seg);
+    finally
+      if Seg.Depth > 0 then
+      begin
+        Seg.StartAngle := Keep.A0;
+        Seg.Sweep := Keep.Sweep;
+        Seg.InnerRadius := Keep.RIn;
+      end;
+      Seg.OuterRadius := Keep.ROut;
+    end;
+  end;
+  if FHoverActive and (FHoverPath <> '') then
+    for I := 0 to FLayout.Segments.Count - 1 do
+    begin
+      Seg := TRingSegment(FLayout.Segments[I]);
+      if Seg.Path = FHoverPath then
+      begin
+        DrawChartHoverTip(Canvas, Seg.Name, Seg.Size, Seg.FractionOfRoot,
+          FHoverX, FHoverY, ClientWidth, ClientHeight);
+        Break;
+      end;
+    end;
 end;
 
 procedure TRingsChart.RebuildLayout;

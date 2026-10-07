@@ -94,16 +94,39 @@ begin
 end;
 
 { What the list shows now, as a CGImage (retained), and its scale. }
+var
+  SnapCount: Integer = 0;
+
+{ Debug: OPENDISK_DEBUG_LIST_SNAP=<dir> saves every snapshot as a PNG. }
+procedure SaveSnapshot(Rep: NSBitmapImageRep);
+var
+  Dir: string;
+  Data: NSData;
+begin
+  Dir := GetEnvironmentVariable('OPENDISK_DEBUG_LIST_SNAP');
+  if Dir = '' then
+    Exit;
+  Inc(SnapCount);
+  Data := Rep.representationUsingType_properties(NSPNGFileType, nil);
+  if Data <> nil then
+    Data.writeToFile_atomically(NSString.stringWithUTF8String(
+      PChar(Format('%s/snap-%.3d.png', [Dir, SnapCount]))), True);
+end;
+
 function Snapshot(View: NSView; out Scale: Double): CGImageRef;
 var
   Rep: NSBitmapImageRep;
 begin
   Result := nil;
   Scale := 2;
+  { Rows set since the last display are not laid out yet: lay them out,
+    or the table renders empty. }
+  View.layoutSubtreeIfNeeded;
   Rep := View.bitmapImageRepForCachingDisplayInRect(View.bounds);
   if Rep = nil then
     Exit;
   View.cacheDisplayInRect_toBitmapImageRep(View.bounds, Rep);
+  SaveSnapshot(Rep);
   if View.bounds.size.width > 0 then
     Scale := Rep.pixelsWide / View.bounds.size.width;
   Result := Rep.CGImage;

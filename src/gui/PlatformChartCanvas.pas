@@ -35,6 +35,9 @@ type
     procedure FillDisk(CX, CY, Radius: Double; FillColor, BorderColor: TColor;
       BorderWidth: Double);
     procedure DrawTo(ACanvas: TCanvas);
+    { Opacity of the shapes filled next (between BeginStatic and
+      EndStatic), for fading segments. }
+    procedure SetAlpha(Alpha: Double);
     property Valid: Boolean read FValid write FValid;
   end;
 
@@ -56,10 +59,6 @@ procedure DrawTextOnArc(ACanvas: TCanvas; const Text: string; CX, CY,
 { Fills R with Color at Alpha (0..1) over what is already drawn, for
   fades (a row appearing is covered by the background, less and less). }
 procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
-
-{ The opacity (0..1) of what is drawn on ACanvas from now on, for fading
-  shapes; 1 restores it. }
-procedure SetCanvasAlpha(ACanvas: TCanvas; Alpha: Double);
 
 implementation
 
@@ -206,19 +205,7 @@ begin
   CGContextFillRect(Ctx, CGRectMake(R.Left, R.Top, R.Right - R.Left, R.Bottom - R.Top));
   CGContextRestoreGState(Ctx);
 end;
-procedure SetCanvasAlpha(ACanvas: TCanvas; Alpha: Double);
-var
-  Ctx: CGContextRef;
-begin
-  Ctx := CanvasCGContext(ACanvas);
-  if Ctx <> nil then
-    CGContextSetAlpha(Ctx, Max(0, Min(1, Alpha)));
-end;
 {$ELSE}
-procedure SetCanvasAlpha(ACanvas: TCanvas; Alpha: Double);
-begin
-end;
-
 procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
 begin
   { No blending: covered only while mostly transparent. }
@@ -386,6 +373,14 @@ begin
   FBitmap.Canvas.Pen.Width := Round(BorderWidth);
   FBitmap.Canvas.Ellipse(Round(CX - Radius), Round(CY - Radius),
     Round(CX + Radius), Round(CY + Radius));
+{$ENDIF}
+end;
+
+procedure TChartCanvasCache.SetAlpha(Alpha: Double);
+begin
+{$IFDEF DARWIN}
+  if FContext <> nil then
+    CGContextSetAlpha(CGContextRef(FContext), Max(0, Min(1, Alpha)));
 {$ENDIF}
 end;
 

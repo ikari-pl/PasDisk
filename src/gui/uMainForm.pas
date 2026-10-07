@@ -2022,8 +2022,11 @@ procedure TMainForm.RefreshList;
 var
   Animate: Boolean;
 begin
+  { Not while rows are still fading in: the "before" snapshot would show
+    them covered (a blank list) and the overlay would animate from that. }
   Animate := FList.HandleAllocated and FList.IsVisible and not ReduceMotion and
-    (FList.Items.Count > 0) and (Length(FRowKeys) = FList.Items.Count);
+    (FList.Items.Count > 0) and (Length(FRowKeys) = FList.Items.Count) and
+    AtRest(FAppearAll, GetTickCount64) and (Length(FAppearPaths) = 0);
   if Animate then
     CaptureListBefore(FList, VisibleRowPlaces);
   RebuildList;
