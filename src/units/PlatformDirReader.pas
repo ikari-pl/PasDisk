@@ -155,7 +155,7 @@ begin
       Code := FindNext(Search);
     end;
   finally
-    FindClose(Search);
+    SysUtils.FindClose(Search);
   end;
 end;
 

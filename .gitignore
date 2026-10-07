@@ -54,3 +54,4 @@ bin/
 # Component demo builds (sources tools/*_demo.lpr/.lpi are tracked)
 /tools/*_demo
 /tools/*_demo.app/
+build/

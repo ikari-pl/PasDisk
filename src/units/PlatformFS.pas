@@ -100,6 +100,13 @@ function c_getpwuid(uid: LongWord): PPasswd; cdecl; external 'c' name 'getpwuid'
 {$IFDEF WINDOWS}
 uses
   Windows, DateUtils;
+
+{ Not declared by FPC 3.2.2's Windows unit (WinBase.h). }
+const
+  FILE_FLAG_OPEN_REPARSE_POINT = $00200000;
+
+function CreateHardLinkW(lpFileName, lpExistingFileName: LPCWSTR;
+  lpSecurityAttributes: Pointer): BOOL; stdcall; external 'kernel32' name 'CreateHardLinkW';
 {$ENDIF}
 
 function ResolveRealPath(const Path: string): string;
@@ -282,7 +289,7 @@ begin
   { TSearchRec.TimeStamp is local time. }
   ModifiedUnix := (LocalTimeToUniversal(Rec.TimeStamp) - UnixDateDelta) * SecsPerDay;
   Size := Rec.Size;
-  FindClose(Rec);
+  SysUtils.FindClose(Rec);
 end;
 {$ENDIF}
 
@@ -332,7 +339,7 @@ begin
   begin
     if (Rec.Attr and faDirectory) = 0 then
       Result := Rec.Size;
-    FindClose(Rec);
+    SysUtils.FindClose(Rec);
   end;
 end;
 {$ENDIF}
@@ -407,7 +414,7 @@ begin
   Result := fpLink(PChar(Existing), PChar(NewPath)) = 0;
   {$ELSE}
   {$IFDEF WINDOWS}
-  Result := Windows.CreateHardLinkW(PWideChar(UnicodeString(NewPath)),
+  Result := CreateHardLinkW(PWideChar(UnicodeString(NewPath)),
     PWideChar(UnicodeString(Existing)), nil);
   {$ELSE}
   Result := False;

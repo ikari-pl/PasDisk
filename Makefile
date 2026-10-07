@@ -14,7 +14,7 @@ BUILDFLAGS = -Mobjfpc -Scghi -O2 -g -gl -Fi$(UNITDIR) -Fu$(UNITDIR) \
 	$(if $(UNIVINT),-Fu$(UNIVINT)) \
 	-k'-framework CoreFoundation' -k'-framework CoreServices' -FE. -FU.
 
-.PHONY: all clean test gui app check-platform
+.PHONY: all clean test gui app check-platform cli-win64
 
 all: opendisk
 
@@ -51,6 +51,19 @@ app: gui packaging/Info.plist packaging/OpenDisk.icns
 	plutil -lint $(APP)/Contents/Info.plist
 
 # OS-specific code stays in src/units/Platform*.pas (od-31j.29).
+# Windows smoke build of the CLI: an FPC cross-compiler and its win64 RTL
+# and packages, built from FPC sources with
+#   make crossall OS_TARGET=win64 CPU_TARGET=x86_64 OPT="-XR$$(xcrun --show-sdk-path)"
+# FPCSRC points at those sources. Output: build/win64/opendisk.exe.
+FPCSRC ?= $(HOME)/src/lazarus/fpc/3.2.2/sources
+PPCROSSX64 ?= $(FPCSRC)/compiler/ppcrossx64
+cli-win64:
+	mkdir -p build/win64/units
+	$(PPCROSSX64) -n -Twin64 -Px86_64 -Mobjfpc -Sh -O2 \
+	  -Fu$(FPCSRC)/rtl/units/x86_64-win64 \
+	  $(foreach d,$(wildcard $(FPCSRC)/packages/*/units/x86_64-win64),-Fu$(d)) \
+	  -Fu$(UNITDIR) -Fi$(UNITDIR) -FUbuild/win64/units -FEbuild/win64 $(SRC)/opendisk.lpr
+
 check-platform:
 	./tests/test_check_platform.sh
 	./tools/check-platform.sh

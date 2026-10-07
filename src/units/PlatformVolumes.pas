@@ -344,6 +344,10 @@ begin
   Result := DirectoryExists(Path);
 end;
 
+{ Not declared by FPC 3.2.2's Windows unit. }
+function GetVolumePathNameW(lpszFileName: LPCWSTR; lpszVolumePathName: LPWSTR;
+  cchBufferLength: DWORD): BOOL; stdcall; external 'kernel32' name 'GetVolumePathNameW';
+
 function MountPointOf(const Path: string): string;
 var
   Buf: array[0..MAX_PATH] of WideChar;
@@ -367,7 +371,7 @@ end;
 function SystemRootPath: string;
 begin
   Result := IncludeTrailingPathDelimiter(
-    ExtractFileDrive(GetEnvironmentVariable('SystemRoot')));
+    ExtractFileDrive(SysUtils.GetEnvironmentVariable('SystemRoot')));
   if Result = PathDelim then
     Result := 'C:\';
 end;
