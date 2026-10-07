@@ -37,9 +37,14 @@ gui: src/gui/OpenDiskGUI.lpi tools/ldwrap/ld
 		src/gui/OpenDiskGUI.lpi
 
 # OpenDisk.app: the GUI binary copied (not linked) into a proper bundle with
-# packaging/Info.plist and icon, ad-hoc signed so Finder and the Dock
-# launch it cleanly.
+# packaging/Info.plist and icon, signed with the keychain's Developer ID
+# Application identity when there is one: privacy grants (Full Disk
+# Access) follow the bundle id and team, so they survive rebuilds. Without
+# one it is ad-hoc signed, and each build needs the grant again.
+# Override with `make app SIGN_IDENTITY=-` (ad-hoc) or another identity.
 APP = OpenDisk.app
+SIGN_IDENTITY ?= $(or $(shell security find-identity -v -p codesigning 2>/dev/null | \
+	sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1),-)
 app: gui packaging/Info.plist packaging/OpenDisk.icns
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
@@ -47,7 +52,8 @@ app: gui packaging/Info.plist packaging/OpenDisk.icns
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
 	cp packaging/OpenDisk.icns $(APP)/Contents/Resources/OpenDisk.icns
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
-	codesign --force --sign - $(APP)
+	codesign --force --options runtime --timestamp=none --sign "$(SIGN_IDENTITY)" $(APP)
+	codesign --verify --strict $(APP)
 	plutil -lint $(APP)/Contents/Info.plist
 
 # OS-specific code stays in src/units/Platform*.pas (od-31j.29).

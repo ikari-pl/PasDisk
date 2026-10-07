@@ -75,7 +75,9 @@ begin
       Continue;
     Inc(Probed);
     if CanList(Path) then
-      Inc(Readable);
+      Inc(Readable)
+    else if GetEnvironmentVariable('OPENDISK_DEBUG_FDA') = '1' then
+      WriteLn(StdErr, 'fda: cannot list ', Path, ' (errno ', fpgeterrno, ')');
   end;
   for I := 0 to High(Files) do
   begin
@@ -83,9 +85,17 @@ begin
       Continue;
     Inc(Probed);
     if CanOpen(Files[I]) then
-      Inc(Readable);
+      Inc(Readable)
+    else if GetEnvironmentVariable('OPENDISK_DEBUG_FDA') = '1' then
+      WriteLn(StdErr, 'fda: cannot open ', Files[I], ' (errno ', fpgeterrno, ')');
   end;
   Result := (Probed > 0) and (Readable = Probed);
+  if GetEnvironmentVariable('OPENDISK_DEBUG_FDA') = '1' then
+  begin
+    WriteLn(StdErr, Format('fda: %d of %d probed locations readable -> granted=%s',
+      [Readable, Probed, BoolToStr(Result, True)]));
+    Flush(StdErr);
+  end;
 end;
 
 procedure OpenFullDiskAccessSettings;
