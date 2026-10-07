@@ -514,7 +514,7 @@ end;
 constructor TMainForm.Create(AOwner: TComponent);
 begin
   inherited CreateNew(AOwner, 0);
-  Caption := 'OpenDisk';
+  Caption := 'PasDisk';
   { DiskAnalysisView .frame(minWidth: 900, idealWidth: 1100,
     minHeight: 600, idealHeight: 720). }
   Width := 1100;
@@ -617,7 +617,7 @@ begin
 
   FPickerTitle := TLabel.Create(Self);
   FPickerTitle.Parent := FPicker;
-  FPickerTitle.Caption := 'OpenDisk';
+  FPickerTitle.Caption := 'PasDisk';
   FPickerTitle.Font.Size := 28;
   FPickerTitle.Font.Style := [fsBold];
   FPickerTitle.Font.Color := CInk;
@@ -1115,7 +1115,7 @@ begin
   FAnalysis.Visible := False;
   FPicker.Visible := True;
   FPicker.BringToFront;
-  Caption := 'OpenDisk';
+  Caption := 'PasDisk';
   ShowWindowToolbar(Self, False);
   SetWindowSubtitle(Self, '');
 end;
@@ -1435,8 +1435,8 @@ begin
     FChart.Root := nil;
     FList.Clear;
     ShowAnalysisState('exclamationmark.shield', 'Full Disk Access Required',
-      'OpenDisk needs Full Disk Access to analyze your entire system. Turn it ' +
-      'on in System Settings, then quit and reopen OpenDisk. macOS only ' +
+      'PasDisk needs Full Disk Access to analyze your entire system. Turn it ' +
+      'on in System Settings, then quit and reopen PasDisk. macOS only ' +
       'applies the change to a freshly launched app.',
       ['Open System Settings', 'Quit && Reopen'], [@OpenFDA, @RelaunchForFDA]);
     FNeedsFullDiskAccess := True;

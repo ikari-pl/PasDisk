@@ -1,4 +1,5 @@
-{ OpenDisk CLI — scan a path, or open an HTML rings view. }
+{ PasDisk CLI — scan a path, or open an HTML rings view (a Free Pascal
+  port of OpenDisk). }
 
 program opendisk;
 
@@ -35,15 +36,15 @@ end;
 
 procedure PrintUsage;
 begin
-  WriteLn('OpenDisk — cross-platform disk usage scanner');
+  WriteLn('PasDisk — cross-platform disk usage scanner (Free Pascal port of OpenDisk)');
   WriteLn('Usage:');
-  WriteLn('  opendisk scan <path>           Full scan (saves cache)');
-  WriteLn('  opendisk rescan <path>         Apply FSEvents deltas to cache (macOS)');
-  WriteLn('  opendisk view <path>           Scan and open SVG rings in the browser');
-  WriteLn('  opendisk search <path> <query> Scan then search names (largest first)');
-  WriteLn('  opendisk watch <path>          Live FSEvents window after a scan');
-  WriteLn('  opendisk volumes               List mounted volumes');
-  WriteLn('  opendisk version               Print version');
+  WriteLn('  pasdisk  scan <path>           Full scan (saves cache)');
+  WriteLn('  pasdisk  rescan <path>         Apply FSEvents deltas to cache (macOS)');
+  WriteLn('  pasdisk  view <path>           Scan and open SVG rings in the browser');
+  WriteLn('  pasdisk  search <path> <query> Scan then search names (largest first)');
+  WriteLn('  pasdisk  watch <path>          Live FSEvents window after a scan');
+  WriteLn('  pasdisk  volumes               List mounted volumes');
+  WriteLn('  pasdisk  version               Print version');
 end;
 
 { EventID and CapturedAt are taken when the scan starts (ScanEngine.swift
@@ -291,7 +292,7 @@ begin
         FillLargestList(Tree, Lines, 60);
         HTML := ChartToHTML(Chart, RootName, Expanded, Lines);
         OutFile := IncludeTrailingPathDelimiter(GetTempDir) +
-          'opendisk-' + FormatDateTime('yyyymmdd-hhnnss', Now) + '.html';
+          'pasdisk-' + FormatDateTime('yyyymmdd-hhnnss', Now) + '.html';
         Lines.Text := HTML;
         Lines.SaveToFile(OutFile);
         WriteLn('Wrote ', OutFile);
@@ -443,7 +444,7 @@ begin
         CmdWatch(ParamStr(2));
       end;
     'version', '-v', '--version':
-      WriteLn('opendisk 0.2.0-dev (pascal)');
+      WriteLn('pasdisk 0.2.0-dev (Free Pascal port of OpenDisk)');
     'help', '-h', '--help':
       PrintUsage;
   else

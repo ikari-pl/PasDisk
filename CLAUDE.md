@@ -60,7 +60,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Swift reference (parity source)
 
-This repo is a Free Pascal / Lazarus port of the Swift OpenDisk app.
+This repo is PasDisk, a Free Pascal / Lazarus port of the Swift OpenDisk app.
 **Do not invent behavior** — match the Swift implementation when adding or
 changing scan, cache, rings, collector, volumes, or GUI flows.
 
@@ -202,8 +202,8 @@ keyboard access, accessibility, and system appearance while porting it.
 ## Build & Test
 
 ```bash
-make            # → ./opendisk
-make gui        # → ./opendisk-gui  (needs tools/ldwrap → Xcode ld-classic)
+make            # → ./pasdisk
+make gui        # → ./pasdisk-gui  (needs tools/ldwrap → Xcode ld-classic)
 make test
 ```
 

@@ -1,8 +1,8 @@
-# OpenDisk (Pascal)
+# PasDisk
 
-Cross-platform disk usage analyzer — Free Pascal rewrite of
-[OpenDisk](https://github.com/137137137/OpenDisk), aimed at **macOS, Windows,
-and Linux**.
+Cross-platform disk usage analyzer — a Free Pascal port of
+[OpenDisk](https://github.com/137137137/OpenDisk) (MIT), aimed at **macOS,
+Windows, and Linux**.
 
 ## Status (goal: full parity + better visuals)
 
@@ -11,12 +11,12 @@ and Linux**.
 | FileTree + hard-link once-counting | Done |
 | Darwin `getattrlistbulk` (FindFirst fallback) | Done |
 | Rings geometry (`RingsLayout` = Swift) | Done |
-| SVG HTML viewer (`opendisk view`) | Done |
+| SVG HTML viewer (`pasdisk view`) | Done |
 | Name search | Done |
 | Collector + protected paths (units) | Done |
 | FSEvents incremental (`watch` / `rescan`) | Done |
-| ScanCache persistence (`~/Library/Caches/opendisk/`) | Done |
-| Volume listing (`opendisk volumes`) | Done |
+| ScanCache persistence (`~/Library/Caches/pasdisk/`) | Done |
+| Volume listing (`pasdisk volumes`) | Done |
 | Cocoa LCL GUI | **Done** — link via `tools/ldwrap` (Xcode `ld-classic`) |
 | Windows / Linux smoke | Not verified yet |
 | Device picker UX / collector delete UI | Partial (collector panel in GUI) |
@@ -29,9 +29,9 @@ and Linux**.
 ## Build
 
 ```sh
-make            # → ./opendisk
-make gui        # → ./opendisk-gui  (needs Xcode ld-classic wrapper)
-make app        # → ./OpenDisk.app (bundle with Info.plist + icon, ad-hoc signed)
+make            # → ./pasdisk
+make gui        # → ./pasdisk-gui  (needs Xcode ld-classic wrapper)
+make app        # → ./PasDisk.app (bundle with Info.plist + icon; Developer ID signed when available, else ad-hoc)
 make test
 ```
 
@@ -42,12 +42,12 @@ mounted volume, network shares included, so it is opt-in:
 ## Run
 
 ```sh
-./opendisk volumes
-./opendisk scan ~              # full scan + cache
-./opendisk rescan ~            # FSEvents delta onto cache (macOS)
-./opendisk view ~
-./opendisk search ~ cache
-./opendisk watch ~             # live 5s FSEvents window after scan
+./pasdisk volumes
+./pasdisk scan ~              # full scan + cache
+./pasdisk rescan ~            # FSEvents delta onto cache (macOS)
+./pasdisk view ~
+./pasdisk search ~ cache
+./pasdisk watch ~             # live 5s FSEvents window after scan
 ```
 
 ## Layout

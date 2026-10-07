@@ -69,7 +69,7 @@ uses
   CocoaAll, MacOSAll, LCLIntf, Formatters;
 
 const
-  CollectedFileType = 'software.ikari.opendisk.collected-file';
+  CollectedFileType = 'software.ikari.pasdisk.collected-file';
   MaxPreviewImages = 12;
 
 type

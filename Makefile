@@ -16,9 +16,9 @@ BUILDFLAGS = -Mobjfpc -Scghi -O2 -g -gl -Fi$(UNITDIR) -Fu$(UNITDIR) \
 
 .PHONY: all clean test gui app check-platform cli-win64 cli-linux64
 
-all: opendisk
+all: pasdisk
 
-opendisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
+pasdisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirTypes.pas $(UNITDIR)/PlatformDirReader.pas \
 		$(UNITDIR)/Traversal.pas $(UNITDIR)/Formatters.pas \
 		$(UNITDIR)/ChartItem.pas $(UNITDIR)/RingsLayout.pas \
 		$(UNITDIR)/RingsSVG.pas $(UNITDIR)/SearchIndex.pas $(UNITDIR)/PlatformTextFold.pas \
@@ -27,7 +27,7 @@ opendisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirTypes.pas $(
 		$(UNITDIR)/ScanCache.pas $(UNITDIR)/Volumes.pas \
 		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
 		$(UNITDIR)/PlatformShell.pas $(UNITDIR)/PlatformLocale.pas
-	$(FPC) $(BUILDFLAGS) -oopendisk $(SRC)/opendisk.lpr
+	$(FPC) $(BUILDFLAGS) -opasdisk $(SRC)/opendisk.lpr
 
 # Cocoa LCL needs Xcode ld-classic — new ld (1267+) rejects FPC ObjC method lists.
 gui: src/gui/OpenDiskGUI.lpi tools/ldwrap/ld
@@ -36,21 +36,23 @@ gui: src/gui/OpenDiskGUI.lpi tools/ldwrap/ld
 		--opt="-FD$(LDWRAP)" \
 		src/gui/OpenDiskGUI.lpi
 
-# OpenDisk.app: the GUI binary copied (not linked) into a proper bundle with
+# PasDisk.app: the GUI binary copied (not linked) into a proper bundle with
 # packaging/Info.plist and icon, signed with the keychain's Developer ID
 # Application identity when there is one: privacy grants (Full Disk
 # Access) follow the bundle id and team, so they survive rebuilds. Without
 # one it is ad-hoc signed, and each build needs the grant again.
 # Override with `make app SIGN_IDENTITY=-` (ad-hoc) or another identity.
-APP = OpenDisk.app
+APP = PasDisk.app
+# The app icon; the designer's own PasDisk icon replaces it (od-31j.55).
+APP_ICON ?= packaging/OpenDisk.icns
 SIGN_IDENTITY ?= $(or $(shell security find-identity -v -p codesigning 2>/dev/null | \
 	sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1),-)
-app: gui packaging/Info.plist packaging/OpenDisk.icns
+app: gui packaging/Info.plist $(APP_ICON)
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp opendisk-gui $(APP)/Contents/MacOS/OpenDisk
+	cp pasdisk-gui $(APP)/Contents/MacOS/PasDisk
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
-	cp packaging/OpenDisk.icns $(APP)/Contents/Resources/OpenDisk.icns
+	cp $(APP_ICON) $(APP)/Contents/Resources/PasDisk.icns
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
 	codesign --force --options runtime --timestamp=none --sign "$(SIGN_IDENTITY)" $(APP)
 	codesign --verify --strict $(APP)
@@ -60,7 +62,7 @@ app: gui packaging/Info.plist packaging/OpenDisk.icns
 # Windows smoke build of the CLI: an FPC cross-compiler and its win64 RTL
 # and packages, built from FPC sources with
 #   make crossall OS_TARGET=win64 CPU_TARGET=x86_64 OPT="-XR$$(xcrun --show-sdk-path)"
-# FPCSRC points at those sources. Output: build/win64/opendisk.exe.
+# FPCSRC points at those sources. Output: build/win64/pasdisk.exe.
 FPCSRC ?= $(HOME)/src/lazarus/fpc/3.2.2/sources
 PPCROSSX64 ?= $(FPCSRC)/compiler/ppcrossx64
 cli-win64:
@@ -68,7 +70,7 @@ cli-win64:
 	$(PPCROSSX64) -n -Twin64 -Px86_64 -Mobjfpc -Sh -O2 \
 	  -Fu$(FPCSRC)/rtl/units/x86_64-win64 \
 	  $(foreach d,$(wildcard $(FPCSRC)/packages/*/units/x86_64-win64),-Fu$(d)) \
-	  -Fu$(UNITDIR) -Fi$(UNITDIR) -FUbuild/win64/units -FEbuild/win64 $(SRC)/opendisk.lpr
+	  -Fu$(UNITDIR) -Fi$(UNITDIR) -FUbuild/win64/units -FEbuild/win64 -opasdisk.exe $(SRC)/opendisk.lpr
 
 # Linux smoke build of the CLI (x86_64, glibc >= 2.34): the same cross
 # setup for OS_TARGET=linux plus BINUTILSPREFIX=x86_64-elf- (brew
@@ -77,7 +79,7 @@ cli-win64:
 # LINUX_SYSROOT holds Debian's libc6 and libc6-dev unpacked, with the
 # absolute paths in usr/lib/x86_64-linux-gnu/libc.so and libm.so pointed
 # inside it (x86_64-elf-ld has no --sysroot support).
-# Output: build/linux64/opendisk.
+# Output: build/linux64/pasdisk.
 LINUX_SYSROOT ?=
 cli-linux64:
 	@test -n "$(LINUX_SYSROOT)" || { echo "set LINUX_SYSROOT"; exit 1; }
@@ -87,7 +89,7 @@ cli-linux64:
 	  -Fl$(LINUX_SYSROOT)/lib/x86_64-linux-gnu \
 	  -Fu$(FPCSRC)/rtl/units/x86_64-linux \
 	  $(foreach d,$(wildcard $(FPCSRC)/packages/*/units/x86_64-linux),-Fu$(d)) \
-	  -Fu$(UNITDIR) -Fi$(UNITDIR) -FUbuild/linux64/units -FEbuild/linux64 $(SRC)/opendisk.lpr
+	  -Fu$(UNITDIR) -Fi$(UNITDIR) -FUbuild/linux64/units -FEbuild/linux64 -opasdisk $(SRC)/opendisk.lpr
 
 check-platform:
 	./tests/test_check_platform.sh
@@ -233,7 +235,7 @@ tests/test_searchcontroller: tests/test_searchcontroller.pas $(UNITDIR)/SearchCo
 	$(FPC) $(BUILDFLAGS) -otests/test_searchcontroller tests/test_searchcontroller.pas
 
 clean:
-	rm -f opendisk opendisk-gui tests/test_filetree tests/test_dirreader \
+	rm -f pasdisk pasdisk-gui opendisk opendisk-gui tests/test_filetree tests/test_dirreader \
 		tests/test_scancache tests/test_incremental tests/test_fsevents tests/test_volumes \
 		tests/test_collector tests/test_protectedpaths tests/test_ringslayout \
 		tests/test_traversal tests/test_volumeroot tests/test_texttrim \

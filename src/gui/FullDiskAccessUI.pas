@@ -52,7 +52,7 @@ begin
   if GetBoolPreference(PrefPromptSuppressed, False) or FullDiskAccessGranted then
     Exit;
   if ShowSuppressibleAlert('Full Disk Access Required',
-    'OpenDisk needs Full Disk Access to analyze all files and folders on your ' +
+    'PasDisk needs Full Disk Access to analyze all files and folders on your ' +
     'system. You can grant this permission in System Settings > Privacy & ' +
     'Security > Full Disk Access.', ['Open Settings', 'Later'], Suppressed) = 0 then
     OpenFullDiskAccessSettings;
@@ -119,7 +119,7 @@ begin
   FCheckAgain.SetBounds(Width - Margin - 120, Margin + 28, 120, 28);
   FCheckAgain.Anchors := [akTop, akRight];
   FCheckAgain.OnClick := @CheckAgainClick;
-  FAccessCaption := AddLabel('Full Disk Access allows OpenDisk to analyze all files ' +
+  FAccessCaption := AddLabel('Full Disk Access allows PasDisk to analyze all files ' +
     'and folders on your system for accurate disk usage information.',
     Margin + 66, 10, True);
   FOpenSettings := TButton.Create(Self);
@@ -141,7 +141,7 @@ begin
   FResetSuppression.OnClick := @ResetSuppressionClick;
 
   FSectionAbout := AddHeader('info.circle', 'About Permissions', 0);
-  FAbout := AddLabel('Why does OpenDisk need Full Disk Access?' + LineEnding + LineEnding +
+  FAbout := AddLabel('Why does PasDisk need Full Disk Access?' + LineEnding + LineEnding +
     '• Analyze system files and protected folders' + LineEnding +
     '• Calculate accurate disk usage across all directories' + LineEnding +
     '• Access application containers and caches' + LineEnding +

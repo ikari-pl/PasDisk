@@ -1,7 +1,7 @@
 { PlatformPreferences — small persistent user settings (Swift UserDefaults /
   @AppStorage).
 
-  macOS: CFPreferences in the app's domain (software.ikari.opendisk, the
+  macOS: CFPreferences in the app's domain (software.ikari.pasdisk, the
   bundle id), so the bundled app and a bare binary share them. Elsewhere:
   a key=value file in the user's configuration directory. }
 
@@ -26,7 +26,7 @@ uses
   {$IFDEF DARWIN}, MacOSAll{$ENDIF};
 
 const
-  AppDomain = 'software.ikari.opendisk';
+  AppDomain = 'software.ikari.pasdisk';
 
 var
   CurrentDomain: string = AppDomain;

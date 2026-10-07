@@ -55,3 +55,6 @@ bin/
 /tools/*_demo
 /tools/*_demo.app/
 build/
+/pasdisk
+/pasdisk-gui
+/PasDisk.app/

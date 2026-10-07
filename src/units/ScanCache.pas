@@ -84,7 +84,7 @@ function CacheDirectory: string;
 begin
   if DirectoryOverride <> '' then
     Exit(ExcludeTrailingPathDelimiter(DirectoryOverride));
-  Result := IncludeTrailingPathDelimiter(AppCacheDirectory('opendisk')) +
+  Result := IncludeTrailingPathDelimiter(AppCacheDirectory('pasdisk')) +
     'ScanCache';
 end;
 

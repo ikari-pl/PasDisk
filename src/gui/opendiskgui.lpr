@@ -12,7 +12,7 @@ uses
 
 begin
   RequireDerivedFormResource := False;
-  Application.Title := 'OpenDisk';
+  Application.Title := 'PasDisk';
   Application.Scaled := True;
   Application.Initialize;
   Application.CreateForm(TMainForm, MainForm);

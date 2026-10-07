@@ -143,7 +143,7 @@ begin
   Result :=
     '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/>' +
     '<meta name="viewport" content="width=device-width, initial-scale=1"/>' +
-    '<title>' + XmlEsc(Title) + ' — OpenDisk</title>' +
+    '<title>' + XmlEsc(Title) + ' — PasDisk</title>' +
     '<style>' +
     ':root{--ink:#201814;--muted:#665e58;--panel:#fbfaf8;--rule:#d8dee6}' +
     '*{box-sizing:border-box}' +
@@ -166,7 +166,7 @@ begin
     '.center-name{font:700 15px "Iowan Old Style",Palatino,serif;fill:var(--ink)}' +
     '.center-size{font:12px ui-monospace,Menlo,monospace;fill:var(--muted)}' +
     '</style></head><body>' +
-    '<header><h1>OpenDisk</h1>' +
+    '<header><h1>PasDisk</h1>' +
     '<p class="sub">' + XmlEsc(ScanPath) + ' · ' +
     XmlEsc(FormatFileSize(Root.Size)) + '</p></header>' +
     '<main><section class="panel"><h2>Largest first</h2><ol>' + Rows +
