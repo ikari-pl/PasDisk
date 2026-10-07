@@ -8,9 +8,20 @@ interface
 
 uses
   Classes, SysUtils, Math, Graphics, Controls, ChartItem, Formatters, RingsLayout,
-  GuiColors, PlatformChartCanvas, ChartHoverTip, DesignTokens, PlatformChartAccessibility;
+  GuiColors, PlatformChartCanvas, ChartHoverTip, DesignTokens, PlatformChartAccessibility,
+  Motion, PlatformMotion;
 
 type
+  { A segment's shape: start angle, sweep, inner and outer radius. }
+  TRingGeometry = record
+    A0, Sweep, RIn, ROut: Double;
+  end;
+
+  TDepartedRing = record
+    Geometry: TRingGeometry;
+    Color: TColor;
+  end;
+
   TRingSelectEvent = procedure(Sender: TObject; const Path: string;
     IsCenter: Boolean) of object;
 
@@ -34,6 +45,31 @@ type
     { Folder paths of the accessible elements ('' for files). }
     FAccessiblePaths: array of string;
     FStaticLayer: TChartCanvasCache;
+    { Chart motion (owner decision, not in Swift): when the root or its
+      sizes change, each segment eases from where it was drawn (FFrom,
+      by index into FLayout.Segments) to its new place; segments new to
+      the chart grow out of their parent's old arc or fade in
+      (FFadeIn); segments that left fade out where they were. Entering a
+      folder thereby zooms: its children were already drawn one ring
+      out, and it widens into the centre disk. }
+    FFrom: array of TRingGeometry;
+    FFadeIn: array of Boolean;
+    { The colour each segment had where it was drawn: colours are relative
+      to the root, so they change on navigation and blend over. }
+    FFromColor: array of TColor;
+    FDeparted: array of TDepartedRing;
+    FMotion: TAnimatedValue;
+    FMotionClock: TFrameClock;
+    { No frame drawn yet: the motion's clock starts with the first one, so
+      main-thread work right after the change (navigation, list refresh)
+      does not eat its start. }
+    FMotionWaiting: Boolean;
+    procedure MotionFrame(Sender: TObject);
+    function Animating: Boolean;
+    function ShownGeometry(Index: Integer; P: Double): TRingGeometry;
+    function ShownColor(Index: Integer; P: Double): TColor;
+    procedure ChangeRoot(ARoot: TChartItem; Owns: Boolean);
+    procedure PaintMotion(const R: TRect);
     procedure SetRoot(AValue: TChartItem);
     procedure RebuildLayout;
     procedure DrawBackground(ACanvas: TCanvas; const R: TRect);
@@ -88,6 +124,7 @@ end;
 
 destructor TRingsChart.Destroy;
 begin
+  FreeAndNil(FMotionClock);
   FreeAndNil(FLayout);
   FreeAndNil(FStaticLayer);
   if FOwnsRoot then
@@ -97,26 +134,290 @@ end;
 
 procedure TRingsChart.SetRoot(AValue: TChartItem);
 begin
-  if FOwnsRoot then
-    FreeAndNil(FRoot);
-  FOwnsRoot := False;
-  FRoot := AValue;
-  FEnvHoverApplied := False;
-  RebuildLayout;
-  FStaticLayer.Invalidate;
-  Invalidate;
+  ChangeRoot(AValue, False);
 end;
 
 procedure TRingsChart.TakeRoot(ARoot: TChartItem);
 begin
-  if FOwnsRoot then
+  ChangeRoot(ARoot, True);
+end;
+
+const
+  ChartZoomMs = 150;
+  ChartSettleMs = 125;
+  { Departing segments are gone within this share of the motion (owner:
+    fade-outs much faster than the movement). }
+  ChartFadeOutShare = 0.3;
+
+function Blend(C1, C2: TColor; T: Double): TColor; forward;
+
+{ The colour segment Index shows at progress P. }
+function TRingsChart.ShownColor(Index: Integer; P: Double): TColor;
+var
+  Seg: TRingSegment;
+begin
+  Seg := TRingSegment(FLayout.Segments[Index]);
+  Result := ColorToRGB(ColorFor(Seg.ColorPosition, Seg.Depth, False));
+  if Index <= High(FFromColor) then
+    Result := Blend(FFromColor[Index], Result, P);
+end;
+
+function GeometryOf(Seg: TRingSegment): TRingGeometry;
+begin
+  if Seg.Depth = 0 then
+  begin
+    { The centre disk: a full turn from the centre out. }
+    Result.A0 := 0;
+    Result.Sweep := 2 * Pi;
+    Result.RIn := 0;
+  end
+  else
+  begin
+    Result.A0 := Seg.StartAngle;
+    Result.Sweep := Seg.Sweep;
+    Result.RIn := Seg.InnerRadius;
+  end;
+  Result.ROut := Seg.OuterRadius;
+end;
+
+function LerpGeometry(const A, B: TRingGeometry; P: Double): TRingGeometry;
+var
+  D: Double;
+begin
+  { Start angles take the shorter way round. }
+  D := B.A0 - A.A0;
+  while D > Pi do
+    D := D - 2 * Pi;
+  while D < -Pi do
+    D := D + 2 * Pi;
+  Result.A0 := A.A0 + D * P;
+  Result.Sweep := A.Sweep + (B.Sweep - A.Sweep) * P;
+  Result.RIn := A.RIn + (B.RIn - A.RIn) * P;
+  Result.ROut := A.ROut + (B.ROut - A.ROut) * P;
+end;
+
+function TRingsChart.Animating: Boolean;
+begin
+  Result := (FMotionClock <> nil) and FMotionClock.Running;
+end;
+
+function TRingsChart.ShownGeometry(Index: Integer; P: Double): TRingGeometry;
+begin
+  Result := GeometryOf(TRingSegment(FLayout.Segments[Index]));
+  if Index <= High(FFrom) then
+    Result := LerpGeometry(FFrom[Index], Result, P);
+end;
+
+{ New root (navigation) or new sizes (a scan update): the chart is laid
+  out again, and moves there from what it showed. }
+procedure TRingsChart.ChangeRoot(ARoot: TChartItem; Owns: Boolean);
+var
+  OldPaths, NewPaths: TStringList;
+  OldShapes: array of TRingGeometry;
+  OldColors: array of TColor;
+  OldRoot: string;
+  Seg: TRingSegment;
+  I, K, Up, N: Integer;
+  P, F: Double;
+  PG, NG, PF: TRingGeometry;
+  Navigating: Boolean;
+  Slow: Integer;
+begin
+  OldPaths := nil;
+  OldRoot := '';
+  { Where each segment is drawn now (mid-motion: where it is on screen). }
+  if (FLayout <> nil) and HandleAllocated and IsVisible and not ReduceMotion then
+  begin
+    P := 1;
+    if Animating then
+      P := ValueAt(FMotion, GetTickCount64);
+    OldPaths := TStringList.Create;
+    OldPaths.Sorted := True;
+    OldPaths.Duplicates := dupIgnore;
+    SetLength(OldShapes, FLayout.Segments.Count);
+    SetLength(OldColors, FLayout.Segments.Count);
+    for I := 0 to FLayout.Segments.Count - 1 do
+    begin
+      Seg := TRingSegment(FLayout.Segments[I]);
+      if Seg.Depth = 0 then
+        OldRoot := Seg.Path;
+      OldShapes[I] := ShownGeometry(I, P);
+      OldColors[I] := ShownColor(I, P);
+      if Seg.Path <> '' then
+        OldPaths.AddObject(Seg.Path, TObject(PtrInt(I)));
+    end;
+  end;
+
+  if FOwnsRoot and (FRoot <> ARoot) then
     FreeAndNil(FRoot);
   FRoot := ARoot;
+  FOwnsRoot := Owns;
   FEnvHoverApplied := False;
-  FOwnsRoot := True;
   RebuildLayout;
   FStaticLayer.Invalidate;
+  FFrom := nil;
+  FFadeIn := nil;
+  FFromColor := nil;
+  FDeparted := nil;
+  try
+    if (OldPaths = nil) or (FLayout = nil) then
+    begin
+      if FMotionClock <> nil then
+        FMotionClock.Stop;
+      Exit;
+    end;
+    NewPaths := TStringList.Create;
+    try
+      NewPaths.Sorted := True;
+      NewPaths.Duplicates := dupIgnore;
+      SetLength(FFrom, FLayout.Segments.Count);
+      SetLength(FFadeIn, FLayout.Segments.Count);
+      SetLength(FFromColor, FLayout.Segments.Count);
+      Navigating := False;
+      for I := 0 to FLayout.Segments.Count - 1 do
+      begin
+        Seg := TRingSegment(FLayout.Segments[I]);
+        if Seg.Path <> '' then
+          NewPaths.AddObject(Seg.Path, TObject(PtrInt(I)));
+        if (Seg.Depth = 0) and (Seg.Path <> OldRoot) then
+          Navigating := True;
+        NG := GeometryOf(Seg);
+        FFrom[I] := NG;
+        FFadeIn[I] := False;
+        FFromColor[I] := ColorToRGB(ColorFor(Seg.ColorPosition, Seg.Depth, False));
+        if (Seg.Path <> '') and OldPaths.Find(Seg.Path, K) then
+        begin
+          FFrom[I] := OldShapes[PtrInt(OldPaths.Objects[K])];
+          FFromColor[I] := OldColors[PtrInt(OldPaths.Objects[K])];
+          Continue;
+        end;
+        { New here: out of its parent's old arc, when the parent was
+          drawn; else it fades in. Parents come before their children. }
+        FFadeIn[I] := True;
+        if NewPaths.Find(ExtractFileDir(Seg.Path), K) then
+        begin
+          Up := PtrInt(NewPaths.Objects[K]);
+          if (Up < I) and not FFadeIn[Up] then
+          begin
+            PG := GeometryOf(TRingSegment(FLayout.Segments[Up]));
+            PF := FFrom[Up];
+            if PG.Sweep > 0 then
+            begin
+              F := PF.Sweep / PG.Sweep;
+              FFrom[I].A0 := PF.A0 + (NG.A0 - PG.A0) * F;
+              FFrom[I].Sweep := NG.Sweep * F;
+              FFrom[I].RIn := PF.ROut;
+              FFrom[I].ROut := PF.ROut;
+              FFadeIn[I] := False;
+            end;
+          end;
+        end;
+      end;
+      { Segments no longer in the chart fade out where they were. }
+      N := 0;
+      SetLength(FDeparted, Length(OldShapes));
+      for I := 0 to OldPaths.Count - 1 do
+        if not NewPaths.Find(OldPaths[I], K) then
+        begin
+          FDeparted[N].Geometry := OldShapes[PtrInt(OldPaths.Objects[I])];
+          FDeparted[N].Color := OldColors[PtrInt(OldPaths.Objects[I])];
+          Inc(N);
+        end;
+      SetLength(FDeparted, N);
+    finally
+      NewPaths.Free;
+    end;
+    FMotion := AnimatedAt(0);
+    { Entering or leaving a folder is a spatial move (ease-out); a scan
+      update settles (snappy). Owner-tuned: quick, so the chart never
+      lags the list. }
+    { Debug: OPENDISK_DEBUG_MOTION_SLOW=<n> stretches it n times, to
+      inspect frames. }
+    Slow := StrToIntDef(GetEnvironmentVariable('OPENDISK_DEBUG_MOTION_SLOW'), 1);
+    if Navigating then
+      Retarget(FMotion, 1, GetTickCount64, ChartZoomMs * Max(1, Slow), eaEaseOut)
+    else
+      Retarget(FMotion, 1, GetTickCount64, ChartSettleMs * Max(1, Slow), eaSnappy);
+    FMotionWaiting := True;
+    if FMotionClock = nil then
+      FMotionClock := TFrameClock.Create(Self, @MotionFrame);
+    FMotionClock.Start;
+  finally
+    OldPaths.Free;
+    Invalidate;
+  end;
+end;
+
+procedure TRingsChart.MotionFrame(Sender: TObject);
+var
+  Duration: Integer;
+  Easing: TEasing;
+begin
+  if FMotionWaiting then
+  begin
+    FMotionWaiting := False;
+    Duration := FMotion.DurationMs;
+    Easing := FMotion.Easing;
+    FMotion := AnimatedAt(0);
+    Retarget(FMotion, 1, GetTickCount64, Duration, Easing);
+  end;
+  if GetEnvironmentVariable('OPENDISK_DEBUG_MOTION') = '1' then
+  begin
+    WriteLn(Format('chart frame %.3f (%d segments, %d leaving)',
+      [ValueAt(FMotion, GetTickCount64), Length(FFrom), Length(FDeparted)]));
+    Flush(Output);
+  end;
+  if AtRest(FMotion, GetTickCount64) then
+  begin
+    FMotionClock.Stop;
+    FFrom := nil;
+    FFadeIn := nil;
+    FFromColor := nil;
+    FDeparted := nil;
+  end;
   Invalidate;
+end;
+
+{ One frame of chart motion, drawn directly (the static layer holds only
+  the resting chart). Labels and hover wait until it lands. }
+procedure TRingsChart.PaintMotion(const R: TRect);
+var
+  P, T: Double;
+  I: Integer;
+  G: TRingGeometry;
+  Seg: TRingSegment;
+  Border: TColor;
+begin
+  P := ValueAt(FMotion, GetTickCount64);
+  { Linear time share for the fade-out, over its own shorter span. }
+  T := 1;
+  if FMotion.DurationMs > 0 then
+    T := Min(1, (GetTickCount64 - FMotion.StartMs) / (FMotion.DurationMs * ChartFadeOutShare));
+  DrawBackground(Canvas, R);
+  Border := ColorToRGB(clBtnShadow);
+  for I := 0 to High(FDeparted) do
+  begin
+    SetCanvasAlpha(Canvas, 1 - T);
+    G := FDeparted[I].Geometry;
+    FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY, G.RIn, G.ROut,
+      G.A0, G.A0 + G.Sweep, FDeparted[I].Color, Border, 1);
+  end;
+  for I := 0 to FLayout.Segments.Count - 1 do
+  begin
+    Seg := TRingSegment(FLayout.Segments[I]);
+    G := ShownGeometry(I, P);
+    if (I <= High(FFadeIn)) and FFadeIn[I] then
+      SetCanvasAlpha(Canvas, P)
+    else
+      SetCanvasAlpha(Canvas, 1);
+    if (G.Sweep >= 2 * Pi - 1e-6) and (G.RIn <= 0.5) then
+      FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY, 0, G.ROut,
+        0, 2 * Pi, ShownColor(I, P), Border, 1)
+    else
+      FillAnnularSector(Canvas, FLayout.CenterX, FLayout.CenterY, G.RIn, G.ROut,
+        G.A0, G.A0 + G.Sweep, ShownColor(I, P), Border, 1);
+  end;
+  SetCanvasAlpha(Canvas, 1);
 end;
 
 procedure TRingsChart.RebuildLayout;
@@ -483,6 +784,11 @@ begin
   if FLayout = nil then
     Exit;
   ApplyEnvironmentHover;
+  if Animating and (Length(FFrom) = FLayout.Segments.Count) then
+  begin
+    PaintMotion(R);
+    Exit;
+  end;
   if not FStaticLayer.Valid then
   begin
     FStaticLayer.BeginStatic;

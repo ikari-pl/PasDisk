@@ -281,6 +281,7 @@ type
     procedure ListHoverHookTick(Sender: TObject);
     procedure SortClickHookTick(Sender: TObject);
     procedure ResizeHookTick(Sender: TObject);
+    procedure ZoomHookTick(Sender: TObject);
     procedure CollectorRowMenu(Sender: TObject; const Path: string;
       const ScreenPt: TPoint);
     procedure CollectorPreviewClick(Sender: TObject);
@@ -1704,6 +1705,15 @@ begin
     { Automation: OPENDISK_GUI_SEARCH=<query> types into the search field. }
     if GetEnvironmentVariable('OPENDISK_GUI_SEARCH') <> '' then
       FSearchEdit.Text := GetEnvironmentVariable('OPENDISK_GUI_SEARCH');
+    { Automation: OPENDISK_GUI_ZOOM=<subfolder> opens it 1.5 s after the
+      scan and goes back to the scan root 1.5 s later (chart zoom in/out). }
+    if (GetEnvironmentVariable('OPENDISK_GUI_ZOOM') <> '') and (FHookStage = 0) then
+      with TTimer.Create(Self) do
+      begin
+        Interval := 1500;
+        OnTimer := @ZoomHookTick;
+        Enabled := True;
+      end;
     { Automation: OPENDISK_GUI_SHOW=<folder inside the scan> opens it. }
     ShowPath := GetEnvironmentVariable('OPENDISK_GUI_SHOW');
     { Only for the first scan when a hook chain rescans. }
@@ -3052,6 +3062,21 @@ end;
 procedure TMainForm.CollectorRemoveClick(Sender: TObject);
 begin
   CollectorRemove(nil, FMenuItem.Path);
+end;
+
+procedure TMainForm.ZoomHookTick(Sender: TObject);
+begin
+  if (Sender as TTimer).Tag = 0 then
+  begin
+    (Sender as TTimer).Tag := 1;
+    CrumbNavigate(IncludeTrailingPathDelimiter(FRootPath) +
+      GetEnvironmentVariable('OPENDISK_GUI_ZOOM'));
+  end
+  else
+  begin
+    (Sender as TTimer).Enabled := False;
+    CrumbNavigate(FRootPath);
+  end;
 end;
 
 procedure TMainForm.ResizeHookTick(Sender: TObject);

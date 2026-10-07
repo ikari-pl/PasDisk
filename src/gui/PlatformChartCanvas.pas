@@ -57,6 +57,10 @@ procedure DrawTextOnArc(ACanvas: TCanvas; const Text: string; CX, CY,
   fades (a row appearing is covered by the background, less and less). }
 procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
 
+{ The opacity (0..1) of what is drawn on ACanvas from now on, for fading
+  shapes; 1 restores it. }
+procedure SetCanvasAlpha(ACanvas: TCanvas; Alpha: Double);
+
 implementation
 
 {$IFDEF DARWIN}
@@ -202,7 +206,19 @@ begin
   CGContextFillRect(Ctx, CGRectMake(R.Left, R.Top, R.Right - R.Left, R.Bottom - R.Top));
   CGContextRestoreGState(Ctx);
 end;
+procedure SetCanvasAlpha(ACanvas: TCanvas; Alpha: Double);
+var
+  Ctx: CGContextRef;
+begin
+  Ctx := CanvasCGContext(ACanvas);
+  if Ctx <> nil then
+    CGContextSetAlpha(Ctx, Max(0, Min(1, Alpha)));
+end;
 {$ELSE}
+procedure SetCanvasAlpha(ACanvas: TCanvas; Alpha: Double);
+begin
+end;
+
 procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
 begin
   { No blending: covered only while mostly transparent. }
