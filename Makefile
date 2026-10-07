@@ -14,7 +14,7 @@ BUILDFLAGS = -Mobjfpc -Scghi -O2 -g -gl -Fi$(UNITDIR) -Fu$(UNITDIR) \
 	$(if $(UNIVINT),-Fu$(UNIVINT)) \
 	-k'-framework CoreFoundation' -k'-framework CoreServices' -FE. -FU.
 
-.PHONY: all clean test gui app check-platform cli-win64
+.PHONY: all clean test gui app check-platform cli-win64 cli-linux64
 
 all: opendisk
 
@@ -69,6 +69,25 @@ cli-win64:
 	  -Fu$(FPCSRC)/rtl/units/x86_64-win64 \
 	  $(foreach d,$(wildcard $(FPCSRC)/packages/*/units/x86_64-win64),-Fu$(d)) \
 	  -Fu$(UNITDIR) -Fi$(UNITDIR) -FUbuild/win64/units -FEbuild/win64 $(SRC)/opendisk.lpr
+
+# Linux smoke build of the CLI (x86_64, glibc >= 2.34): the same cross
+# setup for OS_TARGET=linux plus BINUTILSPREFIX=x86_64-elf- (brew
+# x86_64-elf-binutils). On an arm64 host the cross-compiler needs
+# OPT="-dFPC_SOFT_FPUX80 -Fu<dir with rtl/inc/sfpux80.pp + softfpu.pp>".
+# LINUX_SYSROOT holds Debian's libc6 and libc6-dev unpacked, with the
+# absolute paths in usr/lib/x86_64-linux-gnu/libc.so and libm.so pointed
+# inside it (x86_64-elf-ld has no --sysroot support).
+# Output: build/linux64/opendisk.
+LINUX_SYSROOT ?=
+cli-linux64:
+	@test -n "$(LINUX_SYSROOT)" || { echo "set LINUX_SYSROOT"; exit 1; }
+	mkdir -p build/linux64/units
+	$(PPCROSSX64) -n -Tlinux -Px86_64 -Mobjfpc -Sh -O2 -XPx86_64-elf- \
+	  -XR$(LINUX_SYSROOT) -Fl$(LINUX_SYSROOT)/usr/lib/x86_64-linux-gnu \
+	  -Fl$(LINUX_SYSROOT)/lib/x86_64-linux-gnu \
+	  -Fu$(FPCSRC)/rtl/units/x86_64-linux \
+	  $(foreach d,$(wildcard $(FPCSRC)/packages/*/units/x86_64-linux),-Fu$(d)) \
+	  -Fu$(UNITDIR) -Fi$(UNITDIR) -FUbuild/linux64/units -FEbuild/linux64 $(SRC)/opendisk.lpr
 
 check-platform:
 	./tests/test_check_platform.sh

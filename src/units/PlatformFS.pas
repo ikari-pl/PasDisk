@@ -274,7 +274,10 @@ begin
   Result := fpStat(PChar(Path), Info) = 0;
   if not Result then
     Exit;
-  ModifiedUnix := Double(Info.st_mtime) + Double(Info.st_mtimensec) / Double(1e9);
+  { The nanosecond field is st_mtimensec on Darwin/BSD, st_mtime_nsec on
+    Linux. }
+  ModifiedUnix := Double(Info.st_mtime) +
+    Double({$IFDEF LINUX}Info.st_mtime_nsec{$ELSE}Info.st_mtimensec{$ENDIF}) / Double(1e9);
   Size := Info.st_size;
 end;
 {$ELSE}
