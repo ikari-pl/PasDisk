@@ -13,7 +13,7 @@ procedure DrawChartHoverTip(ACanvas: TCanvas; const Name: string; Size: Int64;
 implementation
 
 uses
-  Formatters, TextTrim;
+  Formatters, TextTrim, PlatformChartCanvas;
 
 { S shortened in the middle until it fits Width on ACanvas's font. }
 function FitMiddle(ACanvas: TCanvas; const S: string; Width: Integer): string;
@@ -73,14 +73,10 @@ begin
   OriginX := Min(Max(OriginX, 4), Max(BoundsWidth - PillW - 4, 4));
   OriginY := Min(Max(OriginY, 4), Max(BoundsHeight - PillH - 4, 4));
   R := Rect(OriginX, OriginY, OriginX + PillW, OriginY + PillH);
-  ACanvas.Brush.Style := bsSolid;
-  { Swift's black.opacity(0.8), resolved against the current window surface. }
-  ACanvas.Brush.Color := RGBToColor(
-    Round(Red(ColorToRGB(clWindow)) * 0.2),
-    Round(Green(ColorToRGB(clWindow)) * 0.2),
-    Round(Blue(ColorToRGB(clWindow)) * 0.2));
-  ACanvas.Pen.Style := psClear;
-  ACanvas.RoundRect(R.Left, R.Top, R.Right, R.Bottom, 6, 6);
+  { ChartTipRenderer: black at 0.8 opacity over the chart, so the arcs
+    show through; a soft shadow and a faint light edge keep it legible
+    over dark arcs and the window alike. }
+  FillTipPill(ACanvas, R, 7, clBlack, 0.78, clWhite, 0.14);
   ACanvas.Brush.Style := bsClear;
   ACanvas.Font.Color := RGBToColor(255, 255, 255);
   ACanvas.Font.Style := [fsBold];

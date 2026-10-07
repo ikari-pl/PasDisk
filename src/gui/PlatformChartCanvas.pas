@@ -60,6 +60,12 @@ procedure DrawTextOnArc(ACanvas: TCanvas; const Text: string; CX, CY,
   fades (a row appearing is covered by the background, less and less). }
 procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
 
+{ A hover-tip pill: rounded rect R filled with Color at FillAlpha over what
+  is drawn (truly translucent), a soft shadow under it and a hairline edge
+  of EdgeColor at EdgeAlpha. Off macOS: an opaque rounded rect. }
+procedure FillTipPill(ACanvas: TCanvas; const R: TRect; Radius: Double;
+  Color: TColor; FillAlpha: Double; EdgeColor: TColor; EdgeAlpha: Double);
+
 implementation
 
 {$IFDEF DARWIN}
@@ -205,7 +211,55 @@ begin
   CGContextFillRect(Ctx, CGRectMake(R.Left, R.Top, R.Right - R.Left, R.Bottom - R.Top));
   CGContextRestoreGState(Ctx);
 end;
+procedure FillTipPill(ACanvas: TCanvas; const R: TRect; Radius: Double;
+  Color: TColor; FillAlpha: Double; EdgeColor: TColor; EdgeAlpha: Double);
+var
+  Ctx: CGContextRef;
+  RGB, Edge: TColor;
+  Box: CGRect;
+  Path: CGMutablePathRef;
+  Shadow: CGColorRef;
+begin
+  Ctx := CanvasCGContext(ACanvas);
+  if Ctx = nil then
+    Exit;
+  RGB := ColorToRGB(Color);
+  Edge := ColorToRGB(EdgeColor);
+  Box := CGRectMake(R.Left, R.Top, R.Right - R.Left, R.Bottom - R.Top);
+  Path := CGPathCreateMutable;
+  CGPathAddRoundedRect(Path, nil, Box, Radius, Radius);
+  CGContextSaveGState(Ctx);
+  CGContextSetAllowsAntialiasing(Ctx, 1);
+  { The view is flipped: a positive y offset puts the shadow below. }
+  Shadow := CGColorCreateGenericRGB(0, 0, 0, 0.25);
+  CGContextSetShadowWithColor(Ctx, CGSizeMake(0, 2), 8, Shadow);
+  CGContextAddPath(Ctx, CGPathRef(Path));
+  CGContextSetRGBFillColor(Ctx, Red(RGB) / 255, Green(RGB) / 255, Blue(RGB) / 255,
+    Max(0, Min(1, FillAlpha)));
+  CGContextFillPath(Ctx);
+  CGContextRestoreGState(Ctx);
+  { Hairline edge inside the pill, half a point in. }
+  CGContextSaveGState(Ctx);
+  CGContextAddPath(Ctx, CGPathRef(Path));
+  CGContextSetRGBStrokeColor(Ctx, Red(Edge) / 255, Green(Edge) / 255, Blue(Edge) / 255,
+    Max(0, Min(1, EdgeAlpha)));
+  CGContextSetLineWidth(Ctx, 1);
+  CGContextStrokePath(Ctx);
+  CGContextRestoreGState(Ctx);
+  CGPathRelease(CGPathRef(Path));
+  CGColorRelease(Shadow);
+end;
 {$ELSE}
+procedure FillTipPill(ACanvas: TCanvas; const R: TRect; Radius: Double;
+  Color: TColor; FillAlpha: Double; EdgeColor: TColor; EdgeAlpha: Double);
+begin
+  ACanvas.Brush.Style := bsSolid;
+  ACanvas.Brush.Color := Color;
+  ACanvas.Pen.Style := psClear;
+  ACanvas.RoundRect(R.Left, R.Top, R.Right, R.Bottom, Round(Radius * 2), Round(Radius * 2));
+  ACanvas.Pen.Style := psSolid;
+end;
+
 procedure FillRectAlpha(ACanvas: TCanvas; const R: TRect; Color: TColor; Alpha: Double);
 begin
   { No blending: covered only while mostly transparent. }
