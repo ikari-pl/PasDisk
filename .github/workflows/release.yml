@@ -66,7 +66,9 @@ jobs:
           curl -sSfL -o lazarus.tar.gz \
             "https://sourceforge.net/projects/lazarus/files/Lazarus%20Zip%20_%20GZip/Lazarus%20${LAZARUS_VERSION}/lazarus-${LAZARUS_VERSION}-0.tar.gz/download"
           tar -xzf lazarus.tar.gz -C ~
-          make -C ~/lazarus lazbuild
+          # Lazarus' makefiles call the compiler with -n (no fpc.cfg);
+          # @file loads Homebrew's fpc.cfg explicitly (RTL and package units).
+          make -C ~/lazarus lazbuild OPT="@$(brew --prefix)/etc/fpc.cfg"
 
       - name: Signing identity
         if: env.RELEASE == 'true'
