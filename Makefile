@@ -29,7 +29,7 @@ pasdisk: $(SRC)/opendisk.lpr $(UNITDIR)/FileTree.pas $(UNITDIR)/DirTypes.pas $(U
 		$(UNITDIR)/Incremental.pas $(UNITDIR)/ChangeJournal.pas $(UNITDIR)/PlatformChangeJournal.pas $(UNITDIR)/JournalFactory.pas \
 		$(UNITDIR)/ScanCache.pas $(UNITDIR)/Volumes.pas \
 		$(UNITDIR)/PlatformFS.pas $(UNITDIR)/PlatformVolumes.pas \
-		$(UNITDIR)/PlatformShell.pas $(UNITDIR)/PlatformLocale.pas
+		$(UNITDIR)/PlatformShell.pas $(UNITDIR)/PlatformLocale.pas $(UNITDIR)/Version.pas
 	$(FPC) $(BUILDFLAGS) -opasdisk $(SRC)/opendisk.lpr
 
 # Cocoa LCL needs Xcode ld-classic — new ld (1267+) rejects FPC ObjC method lists.
@@ -46,6 +46,9 @@ gui: src/gui/OpenDiskGUI.lpi tools/ldwrap/ld
 # one it is ad-hoc signed, and each build needs the grant again.
 # Override with `make app SIGN_IDENTITY=-` (ad-hoc) or another identity.
 APP = PasDisk.app
+# CFBundleVersion: Sparkle compares it to decide whether an update is
+# newer, so it grows with every commit.
+APP_BUILD ?= $(shell git rev-list --count HEAD 2>/dev/null || echo 1)
 # The app icon: PasDisk's own (design/icon/PasDisk.svg, built by
 # design/icon/PasDisk-icon-build.sh; od-31j.55).
 APP_ICON ?= packaging/PasDisk.icns
@@ -66,7 +69,10 @@ $(SPARKLE_FW):
 	echo "$(SPARKLE_SHA256)  $(SPARKLE_DIR)/Sparkle.tar.xz" | shasum -a 256 -c -
 	tar -xf $(SPARKLE_DIR)/Sparkle.tar.xz -C $(SPARKLE_DIR)
 
-SIGN = codesign --force --options runtime --timestamp=none --sign "$(SIGN_IDENTITY)"
+# Developer ID signatures carry a secure timestamp (notarization requires
+# it); ad-hoc ones cannot.
+SIGN_TIMESTAMP = $(if $(filter -,$(SIGN_IDENTITY)),--timestamp=none,--timestamp)
+SIGN = codesign --force --options runtime $(SIGN_TIMESTAMP) --sign "$(SIGN_IDENTITY)"
 app: gui packaging/Info.plist $(APP_ICON) $(SPARKLE_FW)
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources $(APP)/Contents/Frameworks
@@ -74,6 +80,7 @@ app: gui packaging/Info.plist $(APP_ICON) $(SPARKLE_FW)
 	cp packaging/Info.plist $(APP)/Contents/Info.plist
 	cp $(APP_ICON) $(APP)/Contents/Resources/PasDisk.icns
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
+	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(APP_BUILD)" $(APP)/Contents/Info.plist
 	ditto $(SPARKLE_FW) $(APP)/Contents/Frameworks/Sparkle.framework
 	$(SIGN) $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
 	$(SIGN) --preserve-metadata=entitlements $(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc

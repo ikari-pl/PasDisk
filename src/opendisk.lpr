@@ -11,7 +11,7 @@ uses
   {$ENDIF}
   SysUtils, Classes, DateUtils, Math, FileTree, Traversal, Formatters, ChartItem, RingsSVG,
   SearchIndex, ScanTopology, Incremental, ChangeJournal, JournalFactory, ScanCache, Volumes, PlatformFS,
-  PlatformShell;
+  PlatformShell, Version;
 
 var
   LastProgressAt: QWord;
@@ -444,7 +444,7 @@ begin
         CmdWatch(ParamStr(2));
       end;
     'version', '-v', '--version':
-      WriteLn('pasdisk 0.2.0-dev (Free Pascal port of OpenDisk)');
+      WriteLn('pasdisk ' + PasDiskVersion + ' (Free Pascal port of OpenDisk)');
     'help', '-h', '--help':
       PrintUsage;
   else

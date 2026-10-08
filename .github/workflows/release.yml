@@ -1,0 +1,109 @@
+# release-please keeps a release PR open on main (Conventional Commits);
+# merging it tags vX.Y.Z and creates the GitHub release, then the macOS job
+# builds PasDisk.app, signs it with the Developer ID, notarizes and staples
+# it, signs the zip for Sparkle and attaches PasDisk-X.Y.Z.zip and
+# appcast.xml (the app's SUFeedURL is releases/latest/download/appcast.xml).
+# workflow_dispatch runs the build alone, ad-hoc signed, as a toolchain check.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  LAZARUS_VERSION: "4.4"
+
+jobs:
+  release-please:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+      version: ${{ steps.rp.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  macos:
+    needs: [release-please]
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       needs.release-please.outputs.release_created == 'true')
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      RELEASE: ${{ needs.release-please.outputs.release_created == 'true' }}
+      TAG: ${{ needs.release-please.outputs.tag_name }}
+      VERSION: ${{ needs.release-please.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the build number is the commit count
+
+      - name: Free Pascal
+        run: brew install fpc && fpc -iV
+
+      - name: Cache Lazarus
+        id: lazcache
+        uses: actions/cache@v4
+        with:
+          path: ~/lazarus
+          key: lazarus-${{ env.LAZARUS_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Lazarus (lazbuild)
+        if: steps.lazcache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL -o lazarus.tar.gz \
+            "https://sourceforge.net/projects/lazarus/files/Lazarus%20Zip%20_%20GZip/Lazarus%20${LAZARUS_VERSION}/lazarus-${LAZARUS_VERSION}-0.tar.gz/download"
+          tar -xzf lazarus.tar.gz -C ~
+          make -C ~/lazarus lazbuild
+
+      - name: Signing identity
+        if: env.RELEASE == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"; KCPASS="$(uuidgen)"
+          security create-keychain -p "$KCPASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPASS" "$KC"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPASS" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Build PasDisk.app
+        run: |
+          if [ "$RELEASE" = true ]; then ID="Developer ID Application"; else ID=-; fi
+          make app LAZBUILD=$HOME/lazarus/lazbuild SIGN_IDENTITY="$ID"
+          make
+          ./pasdisk version
+
+      - name: Notarize, Sparkle, publish
+        if: env.RELEASE == 'true'
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: tools/publish-release.sh "$VERSION" "$TAG"
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12"
